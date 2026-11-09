@@ -67,3 +67,15 @@ def test_grupos_con_bom(tmp_path):
     r.write_text(f"# Ignorado | {L1}\nB | {L2}\n", encoding="utf-8-sig")
     gs = cargar_grupos(r)
     assert (gs[0].nombre, gs[0].activo) == ("Ignorado", False)
+
+
+def test_links_escritos_a_mano_se_reconocen(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_text("A | https://facebook.com/groups/1\n# B | facebook.com/groups/2/?ref=x\n", encoding="utf-8")
+    assert actualizar_grupos(r, [("A", L1), ("B", L2)]) == 0
+    gs = cargar_grupos(r)
+    assert len(gs) == 2
+    assert {g.link for g in gs} == {L1, L2}
+    assert {g.link: g.activo for g in gs} == {L1: True, L2: False}
+    marcar_ignorado(r, L1)
+    assert all(not g.activo for g in cargar_grupos(r))

@@ -33,7 +33,10 @@ def ventana(tmp_path):
     root.update()
     yield root, tiras
     root.app.trabajador.comandos.put(("salir",))
-    root.destroy()
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass  # la prueba ya cerró la ventana
 
 
 def test_restaura_y_muestra_resumen(ventana):
@@ -64,3 +67,24 @@ def test_empezar_sin_grupos_avisa(ventana, monkeypatch):
     root.app._empezar()
     assert avisos and "Actualizar grupos" in avisos[0]
     assert root.app.trabajador.comandos.empty()
+
+
+def test_botones_de_carpeta_bloqueados_mientras_corre(ventana):
+    root, _ = ventana
+    app = root.app
+    app._marcar_corriendo(True, tira=True)
+    assert str(app.btn_cambiar["state"]) == "disabled"
+    assert str(app.btn_escoger["state"]) == "disabled"
+    app._marcar_corriendo(False)
+    assert str(app.btn_cambiar["state"]) == "normal"
+
+
+def test_cerrar_con_pregunta_abierta_responde_detener(ventana):
+    import queue
+    root, _ = ventana
+    app = root.app
+    respuesta = queue.Queue()
+    app.cola_ui.put(("preguntar", "¿Algo?", ["Reintentar", "Saltar este grupo", "Detener"], respuesta))
+    root.after(200, app._al_cerrar)
+    app._procesar_cola()
+    assert respuesta.get(timeout=2) == "Detener"

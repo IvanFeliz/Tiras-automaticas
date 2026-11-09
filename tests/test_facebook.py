@@ -142,3 +142,10 @@ def test_navegador_cerrado_a_mano(fb, tmp_path):
         fb.esperar_resultado(Controles())
     with pytest.raises(NavegadorCerrado):
         fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+
+
+def test_error_de_facebook_despues_de_publicar(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?falla=1"
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    fb.pagina.locator("#publicar").click()
+    assert fb.esperar_resultado(Controles()) == "fallo"

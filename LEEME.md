@@ -36,6 +36,10 @@ Necesitas **Google Chrome** o **Microsoft Edge** (Edge ya viene con Windows).
    - Si cierras la ventanita de Facebook sin publicar, el programa prueba con otro grupo (sin ignorar el primero).
    - **Detener**: para todo. Lo publicado queda guardado y, si vuelves a abrir la misma tira el mismo día,
      te ofrece seguir con las que faltan.
+   - Si Facebook muestra un error al publicar, el programa pregunta qué hacer. Revisa el grupo: si la
+     publicación sí salió, elige **Sí se publicó**.
+   - Si se vence la sesión de Facebook, el programa te pide volver a iniciarla y sigue donde iba.
+   - Si tienes `historial.csv` abierto en Excel, el programa te pide cerrarlo para poder anotar.
 
 ## Archivos de datos
 

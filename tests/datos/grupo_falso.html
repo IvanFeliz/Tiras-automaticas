@@ -37,6 +37,12 @@ document.getElementById('abrir').addEventListener('click', () => {
   d.querySelector('#publicar').addEventListener('click', () => {
     window.__textoPublicado = ed.innerText;
     d.remove();
+    if (location.search.includes('falla=1')) {
+      const a = document.createElement('div');
+      a.setAttribute('role', 'alert');
+      a.innerText = 'No se pudo publicar. Intenta de nuevo más tarde.';
+      setTimeout(() => document.body.appendChild(a), 300);
+    }
   });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') d.remove(); });
 });

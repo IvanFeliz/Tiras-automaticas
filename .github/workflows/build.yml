@@ -4,13 +4,16 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -26,7 +29,7 @@ jobs:
       - name: Generar PublicadorTiras.exe
         run: pyinstaller --onefile --windowed --name PublicadorTiras --paths src src/publicador/__main__.py
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: PublicadorTiras
           path: dist/PublicadorTiras.exe

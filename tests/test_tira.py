@@ -122,3 +122,14 @@ def test_listar_subcarpetas(tmp_path):
         (tmp_path / "b" / n).mkdir(parents=True)
     (tmp_path / "b" / "archivo.txt").write_text("x")
     assert [p.name for p in listar_subcarpetas(tmp_path / "b")] == ["1.lunes", "2 MARTES", "7. DOMINGO"]
+
+
+def test_txt_utf16(tmp_path):
+    texto = "1. Diseño\n\n📱 Está súper\n---\n2. B\n\nOtro"
+    c = tmp_path / "T"
+    c.mkdir()
+    (c / "0 TEXTOS TIRA.txt").write_text(texto, encoding="utf-16")
+    _tocar(c, ["1 A.png", "2 B.png", "0.U.jpg"])
+    t = leer_tira(c)
+    assert t.ok, t.errores
+    assert t.publicaciones[0].texto == "📱 Está súper"

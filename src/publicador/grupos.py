@@ -3,8 +3,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 MARCA_AUTO = "(ya no aparece)"
+RUTAS_ESPECIALES = {"feed", "discover", "joins", "create", "notifications", "search", "you", "categories"}
+
+
+def normalizar_link_grupo(href: str) -> str | None:
+    """Convierte cualquier link de grupo a https://www.facebook.com/groups/<id>/ (o None)."""
+    href = (href or "").strip()
+    if not href:
+        return None
+    if not href.startswith(("http://", "https://", "/")):
+        href = "https://" + href
+    u = urlparse(href)
+    if u.netloc and not u.netloc.endswith("facebook.com"):
+        return None
+    partes = [p for p in u.path.split("/") if p]
+    if len(partes) < 2 or partes[0] != "groups":
+        return None
+    ident = partes[1]
+    if ident.lower() in RUTAS_ESPECIALES:
+        return None
+    return f"https://www.facebook.com/groups/{ident}/"
 
 
 @dataclass
@@ -34,9 +55,12 @@ def _parsear(linea: str) -> _Linea:
     if "|" not in texto:
         return _Linea(linea)
     nombre, link = (p.strip() for p in texto.split("|", 1))
-    if not link.startswith("http"):
-        return _Linea(linea)
-    return _Linea(linea, Grupo(nombre, link, activo), auto)
+    normal = normalizar_link_grupo(link)
+    if normal is None:
+        if not link.startswith("http"):
+            return _Linea(linea)
+        normal = link  # link raro pero válido: se usa tal cual
+    return _Linea(linea, Grupo(nombre, normal, activo), auto)
 
 
 def _formatear(g: Grupo, auto: bool = False) -> str:
@@ -68,6 +92,7 @@ def cargar_grupos(ruta: Path) -> list[Grupo]:
 
 def actualizar_grupos(ruta: Path, encontrados: list[tuple[str, str]]) -> int:
     lineas = _leer(ruta)
+    encontrados = [(n, normalizar_link_grupo(l) or l) for n, l in encontrados]
     hallados = {link: nombre for nombre, link in encontrados}
     conocidos: set[str] = set()
     salida: list[str] = []
@@ -104,7 +129,7 @@ def actualizar_grupos(ruta: Path, encontrados: list[tuple[str, str]]) -> int:
 def marcar_ignorado(ruta: Path, link: str) -> None:
     salida = []
     for l in _leer(ruta):
-        if l.grupo is not None and l.grupo.link == link and l.grupo.activo:
+        if l.grupo is not None and l.grupo.link == (normalizar_link_grupo(link) or link) and l.grupo.activo:
             salida.append(f"# {l.original.strip()}")
         else:
             salida.append(l.original)

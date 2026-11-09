@@ -53,6 +53,7 @@ class Resultado:
 
 
 REINTENTAR, SALTAR, DETENER = "Reintentar", "Saltar este grupo", "Detener"
+SI_SE_PUBLICO = "Sí se publicó"
 
 
 def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui: UIProto,
@@ -131,6 +132,22 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
             if res == "detener":
                 fb.cerrar_compositor()
                 return fin("detenida")
+            if res == "fallo":
+                registrar(pub, grupo, ubicacion, "error")
+                resp = ui.preguntar(f"Facebook mostró un error al publicar en «{grupo.nombre}». "
+                                    "Revisa el grupo en el navegador.",
+                                    [REINTENTAR, SI_SE_PUBLICO, SALTAR, DETENER])
+                if resp == REINTENTAR:
+                    continue
+                if resp == SI_SE_PUBLICO:
+                    registrar(pub, grupo, ubicacion, "publicado")
+                    publicadas += 1
+                    break
+                if resp == DETENER:
+                    return fin("detenida")
+                saltadas += 1
+                grupo = None
+                continue
             registrar(pub, grupo, ubicacion, "saltado")
             saltadas += 1
             if res == "saltar":

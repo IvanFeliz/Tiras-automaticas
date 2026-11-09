@@ -38,3 +38,24 @@ def cargar_config(ruta: Path) -> Config:
 
 def guardar_config(ruta: Path, cfg: Config) -> None:
     Path(ruta).write_text(json.dumps(asdict(cfg), ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def bloquear_instancia(datos: Path):
+    """Evita abrir el programa dos veces (compartirían el mismo navegador).
+
+    Devuelve el archivo abierto que mantiene el candado, o None si ya hay otra instancia.
+    """
+    ruta = Path(datos) / ".abierto.lock"
+    f = open(ruta, "a+")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f

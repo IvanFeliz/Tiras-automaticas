@@ -12,10 +12,10 @@ from datetime import date
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .config import Config, cargar_config, carpeta_datos, guardar_config
+from .config import Config, bloquear_instancia, cargar_config, carpeta_datos, guardar_config
 from .grupos import actualizar_grupos, cargar_grupos
 from .historial import Historial
-from .sesion import Controles, ErrorFacebook, NavegadorCerrado, ejecutar_tira
+from .sesion import DETENER, Controles, ErrorFacebook, NavegadorCerrado, ejecutar_tira
 from .tira import Tira, leer_tira, listar_subcarpetas
 
 TITULO = "Publicador de Tiras"
@@ -96,8 +96,10 @@ class Trabajador(threading.Thread):
 
     def _asegurar_sesion(self, fb) -> None:
         while not fb.sesion_activa():
-            self.ui.preguntar("Inicia sesión en Facebook en el navegador que se abrió y luego da clic en Continuar",
-                              ["Continuar"])
+            resp = self.ui.preguntar("Inicia sesión en Facebook en el navegador que se abrió y luego da clic "
+                                     "en Continuar", ["Continuar", "Cancelar"])
+            if resp != "Continuar":
+                raise ErrorFacebook("Se canceló.")
             fb.pagina.goto("https://www.facebook.com/")
 
     def _grupos(self) -> None:
@@ -137,7 +139,9 @@ class App:
         self.dia_nombre = ""
         self.tira_nombre = ""
         self.corriendo = False
+        self.cerrando = False
         self.controles = Controles()
+        self._responder_pendiente = None  # función para contestar el aviso abierto, si hay uno
 
         self.cola_ui: queue.Queue = queue.Queue()
         self.trabajador = Trabajador(self.datos, UITk(self.cola_ui), self.cola_ui)
@@ -161,7 +165,8 @@ class App:
         ttk.Label(marco, text="Carpeta:").grid(row=0, column=0, sticky="w")
         self.var_carpeta = tk.StringVar(value=self.cfg.carpeta_tiras or "(sin escoger)")
         ttk.Label(marco, textvariable=self.var_carpeta, foreground="#444").grid(row=0, column=1, sticky="w", padx=6)
-        ttk.Button(marco, text="Cambiar", command=self._cambiar_carpeta).grid(row=0, column=2, sticky="e")
+        self.btn_cambiar = ttk.Button(marco, text="Cambiar", command=self._cambiar_carpeta)
+        self.btn_cambiar.grid(row=0, column=2, sticky="e")
 
         fila = ttk.Frame(marco)
         fila.grid(row=1, column=0, columnspan=3, sticky="we", pady=(8, 0))
@@ -173,7 +178,8 @@ class App:
         self.combo_tira = ttk.Combobox(fila, state="readonly", width=12)
         self.combo_tira.pack(side="left", padx=4)
         self.combo_tira.bind("<<ComboboxSelected>>", lambda e: self._tira_elegida())
-        ttk.Button(fila, text="Escoger carpeta…", command=self._escoger_carpeta_tira).pack(side="right")
+        self.btn_escoger = ttk.Button(fila, text="Escoger carpeta…", command=self._escoger_carpeta_tira)
+        self.btn_escoger.pack(side="right")
 
         self.resumen = tk.Text(marco, height=15, wrap="none", relief="solid", borderwidth=1)
         self.resumen.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=8)
@@ -340,7 +346,8 @@ class App:
         self.corriendo = corriendo
         self.btn_saltar.configure(state="normal" if corriendo and tira else "disabled")
         self.btn_detener.configure(state="normal" if corriendo and tira else "disabled")
-        self.btn_grupos.configure(state="disabled" if corriendo else "normal")
+        for b in (self.btn_grupos, self.btn_cambiar, self.btn_escoger):
+            b.configure(state="disabled" if corriendo else "normal")
         for w in (self.combo_dia, self.combo_tira):
             w.configure(state="disabled" if corriendo else "readonly")
         self._actualizar_botones()
@@ -362,7 +369,9 @@ class App:
                     self.var_progreso.set(f"Publicación {actual} de {total} — «{titulo}»\nGrupo: {grupo}")
                 elif tipo == "preguntar":
                     _, mensaje, opciones, respuesta = msg
-                    respuesta.put(self._dialogo(mensaje, opciones))
+                    self._dialogo(mensaje, opciones, respuesta)
+                    if self.cerrando:
+                        return
                 elif tipo == "fin":
                     self.var_estado.set(msg[1])
                     self.var_progreso.set("")
@@ -373,29 +382,48 @@ class App:
                         self.var_estado.set(msg[1])
         except queue.Empty:
             pass
-        self.root.after(100, self._procesar_cola)
+        if not self.cerrando:
+            self.root.after(100, self._procesar_cola)
 
-    def _dialogo(self, mensaje: str, opciones: list[str]) -> str:
+    def _dialogo(self, mensaje: str, opciones: list[str], respuesta: queue.Queue) -> None:
+        """Muestra un aviso con botones. Cerrar el aviso con la X equivale a la última opción."""
         win = tk.Toplevel(self.root)
         win.title(TITULO)
         win.transient(self.root)
         win.attributes("-topmost", True)
-        eleccion = tk.StringVar(value=opciones[-1])
+        contestado = []
+
+        def responder(opcion: str) -> None:
+            if contestado:
+                return
+            contestado.append(opcion)
+            respuesta.put(opcion)
+            self._responder_pendiente = None
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+
+        self._responder_pendiente = lambda: responder(DETENER if DETENER in opciones else opciones[-1])
+        win.protocol("WM_DELETE_WINDOW", lambda: responder(opciones[-1]))
         ttk.Label(win, text=mensaje, wraplength=420, padding=16).pack()
         fila = ttk.Frame(win, padding=(16, 0, 16, 16))
         fila.pack()
         for op in opciones:
-            ttk.Button(fila, text=op, command=lambda o=op: (eleccion.set(o), win.destroy())).pack(side="left", padx=4)
+            ttk.Button(fila, text=op, command=lambda o=op: responder(o)).pack(side="left", padx=4)
         win.grab_set()
         self.root.wait_window(win)
-        return eleccion.get()
+        responder(opciones[-1])  # por si la ventana se destruyó de otra forma
 
     def _al_cerrar(self) -> None:
         if self.corriendo and not messagebox.askyesno(TITULO, "Hay una tira en curso. ¿Cerrar de todos modos?"):
             return
+        self.cerrando = True
         self.controles.detener.set()
+        if self._responder_pendiente is not None:
+            self._responder_pendiente()
         self.trabajador.comandos.put(("salir",))
-        self.trabajador.join(timeout=5)
+        self.trabajador.join(timeout=10)
         self.root.destroy()
 
 
@@ -406,4 +434,14 @@ def crear_ventana(datos: Path | None = None) -> tk.Tk:
 
 
 def main() -> None:
-    crear_ventana().mainloop()
+    candado = bloquear_instancia(carpeta_datos())
+    if candado is None:
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showinfo(TITULO, "El programa ya está abierto en otra ventana.")
+        r.destroy()
+        return
+    try:
+        crear_ventana().mainloop()
+    finally:
+        candado.close()

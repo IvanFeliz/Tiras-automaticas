@@ -158,6 +158,11 @@ Al terminar: *"TIRA 3 terminada ✅ (12 publicadas)"*.
 | La persona cierra el compositor sin publicar | Se toma como Saltar (sin marcar el grupo con `#`), se anota `saltado` y se ofrece otro grupo |
 | Se cierra el programa o se va la luz a media tira | Al abrir la misma tira el mismo día, si el historial tiene publicaciones ya hechas: *"Ya se publicaron 5 de 12. ¿Seguir desde la 6?"* |
 | No hay grupos disponibles | Aviso y se detiene (sección 6) |
+| Facebook muestra un aviso de error después de dar Publicar | Se anota `error` y se pregunta: Reintentar, Sí se publicó, Saltar este grupo o Detener |
+| La sesión venció a media tira | Se pide iniciar sesión y se reintenta el mismo grupo, sin marcarlo |
+| Se cierra el navegador a mano | Se detiene la tira sin marcar grupos; la próxima vez se abre uno nuevo |
+| `historial.csv` abierto en Excel | Se pide cerrarlo y reintentar |
+| Se intenta abrir el programa dos veces | Aviso «El programa ya está abierto» |
 
 ## 9. Pruebas
 
@@ -173,7 +178,8 @@ Al terminar: *"TIRA 3 terminada ✅ (12 publicadas)"*.
 
 - Repositorio en GitHub con el código, las pruebas y esta especificación.
 - Un flujo de GitHub Actions en `windows-latest` que corre las pruebas y genera `PublicadorTiras.exe`
-  (PyInstaller, con el Chromium de Playwright incluido) como archivo descargable.
+  (PyInstaller) como archivo descargable. El programa usa el Chrome o Edge instalado en Windows
+  (Edge viene de fábrica), así que el `.exe` no incluye navegador.
 - Un `LEEME.md` corto para el usuario: cómo abrirlo, iniciar sesión la primera vez y publicar una tira.
 
 ## 11. Riesgos

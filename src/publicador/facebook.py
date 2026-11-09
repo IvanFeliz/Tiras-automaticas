@@ -9,8 +9,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from urllib.parse import urlparse
 
+from .grupos import normalizar_link_grupo  # noqa: F401 (se usa y se reexporta)
 from .sesion import Controles, ErrorFacebook, NavegadorCerrado, SesionCerrada
 
 # --- Selectores y textos (ajustar aquí si Facebook cambia) -----------------------------
@@ -24,7 +24,9 @@ SEL_PROGRESO = '[role="progressbar"]'
 SEL_LOGIN = 'input[name="email"], input[name="pass"]'
 TEXTO_PUBLICAR = "Publicar"
 TEXTO_DESCARTAR = re.compile(r"^\s*Descartar\s*$", re.I)
-RUTAS_ESPECIALES = {"feed", "discover", "joins", "create", "notifications", "search", "you", "categories"}
+SEL_AVISO = '[role="alert"], [role="alertdialog"]'
+TEXTO_AVISO_ERROR = re.compile(r"no se pudo|no se puede|algo sali[oó] mal|intenta(lo)? de nuevo|error", re.I)
+ESPERA_AVISO_S = 2.5
 
 _JS_ESCUCHAR_PUBLICAR = """
 (texto) => {
@@ -65,21 +67,6 @@ _JS_LINKS_GRUPOS = """
 def _solo_letras(texto: str) -> str:
     """Solo letras y números, en minúsculas: para comparar sin emojis ni espacios."""
     return "".join(c for c in (texto or "").lower() if c.isalnum())
-
-
-def normalizar_link_grupo(href: str) -> str | None:
-    if not href:
-        return None
-    u = urlparse(href)
-    if u.netloc and not u.netloc.endswith("facebook.com"):
-        return None
-    partes = [p for p in u.path.split("/") if p]
-    if len(partes) < 2 or partes[0] != "groups":
-        return None
-    ident = partes[1]
-    if ident.lower() in RUTAS_ESPECIALES:
-        return None
-    return f"https://www.facebook.com/groups/{ident}/"
 
 
 class Facebook:
@@ -137,7 +124,8 @@ class Facebook:
         if self._ctx is None:
             self._pw.stop()
             self._pw = None
-            raise ErrorFacebook(f"No se encontró Chrome ni Edge instalado ({ultimo_error})")
+            raise ErrorFacebook("No se pudo abrir el navegador. Revisa que no haya otra ventana del programa "
+                                f"abierta y que Chrome o Edge estén instalados. (Detalle: {ultimo_error})")
         self.pagina = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
 
     def cerrar(self) -> None:
@@ -288,7 +276,9 @@ class Facebook:
                     if self.cerrado:
                         raise NavegadorCerrado()
                     publicado = False
-                return "publicado" if publicado else "cerrado"
+                if not publicado:
+                    return "cerrado"
+                return "fallo" if self._hay_aviso_de_error() else "publicado"
             if controles.detener.is_set():
                 return "detener"
             if controles.saltar.is_set():
@@ -297,6 +287,23 @@ class Facebook:
                 self.pagina.wait_for_timeout(500)
             except Exception as e:
                 raise NavegadorCerrado() from e
+
+    def _hay_aviso_de_error(self) -> bool:
+        """Después de publicar, Facebook puede mostrar un aviso de error: se espera un momento a verlo."""
+        limite = time.monotonic() + ESPERA_AVISO_S
+        while time.monotonic() < limite:
+            try:
+                avisos = self.pagina.locator(SEL_AVISO)
+                for i in range(avisos.count()):
+                    a = avisos.nth(i)
+                    if a.is_visible() and TEXTO_AVISO_ERROR.search(a.inner_text() or ""):
+                        return True
+                self.pagina.wait_for_timeout(250)
+            except Exception:
+                if self.cerrado:
+                    raise NavegadorCerrado()
+                return False
+        return False
 
     def cerrar_compositor(self) -> None:
         if not self._dialogo_abierto():

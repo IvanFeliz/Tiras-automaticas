@@ -247,3 +247,22 @@ def test_historial_bloqueado_por_excel(entorno, tmp_path):
     assert any("Excel" in p for p in ui.preguntas)
     assert [x[2] for x in _resultados(h)] == ["publicado"]
     assert r.publicadas == 1
+
+
+def test_fallo_de_facebook_al_publicar(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb, ui = FakeFB(["fallo", "publicado"]), FakeUI(["Reintentar"])
+    r = _correr(tira, rg, h, fb, ui)
+    assert any("Facebook mostró un error" in p for p in ui.preguntas)
+    assert [x[2] for x in _resultados(h)] == ["error", "publicado"]
+    assert fb.preparadas[0][0] == fb.preparadas[1][0]
+    assert r.publicadas == 1
+
+
+def test_fallo_pero_si_se_publico(entorno):
+    tira, rg, h = entorno(n_pubs=2)
+    fb, ui = FakeFB(["fallo", "publicado"]), FakeUI(["Sí se publicó"])
+    r = _correr(tira, rg, h, fb, ui)
+    assert [p[1] for p in fb.preparadas] == ["Texto 1", "Texto 2"]
+    assert [x[2] for x in _resultados(h)] == ["error", "publicado", "publicado"]
+    assert r.publicadas == 2

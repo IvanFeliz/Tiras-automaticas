@@ -17,3 +17,14 @@ def test_config_corrupto(tmp_path):
 def test_config_claves_desconocidas(tmp_path):
     (tmp_path / "c.json").write_text('{"otra": 1, "ultimo_dia": "1.lunes"}', encoding="utf-8")
     assert cargar_config(tmp_path / "c.json").ultimo_dia == "1.lunes"
+
+
+def test_una_sola_instancia(tmp_path):
+    from publicador.config import bloquear_instancia
+    primero = bloquear_instancia(tmp_path)
+    assert primero is not None
+    assert bloquear_instancia(tmp_path) is None
+    primero.close()
+    otra = bloquear_instancia(tmp_path)
+    assert otra is not None
+    otra.close()

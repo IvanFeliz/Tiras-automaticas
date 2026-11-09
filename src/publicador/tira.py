@@ -34,6 +34,8 @@ class Tira:
 
 def _leer_texto(ruta: Path) -> str:
     datos = ruta.read_bytes()
+    if datos[:2] in (b"\xff\xfe", b"\xfe\xff"):  # «Unicode» del Bloc de notas
+        return datos.decode("utf-16").replace("\r\n", "\n").replace("\r", "\n")
     for codificacion in ("utf-8-sig", "cp1252"):
         try:
             texto = datos.decode(codificacion)
