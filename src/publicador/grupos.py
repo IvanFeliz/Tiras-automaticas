@@ -50,7 +50,12 @@ def _leer(ruta: Path) -> list[_Linea]:
     ruta = Path(ruta)
     if not ruta.exists():
         return []
-    return [_parsear(l) for l in ruta.read_text(encoding="utf-8").splitlines()]
+    datos = ruta.read_bytes()
+    try:
+        texto = datos.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        texto = datos.decode("cp1252", errors="replace")
+    return [_parsear(l.lstrip("\ufeff")) for l in texto.splitlines()]
 
 
 def _escribir(ruta: Path, lineas: list[str]) -> None:

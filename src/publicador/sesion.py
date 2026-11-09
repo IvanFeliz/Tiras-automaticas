@@ -18,6 +18,14 @@ class ErrorFacebook(Exception):
     """Algo falló al preparar una publicación en Facebook."""
 
 
+class SesionCerrada(Exception):
+    """Facebook pide iniciar sesión."""
+
+
+class NavegadorCerrado(Exception):
+    """El navegador se cerró (por ejemplo, a mano)."""
+
+
 @dataclass
 class Controles:
     saltar: threading.Event = field(default_factory=threading.Event)
@@ -25,7 +33,6 @@ class Controles:
 
 
 class NavegadorProto(Protocol):
-    def sesion_activa(self) -> bool: ...
     def preparar_publicacion(self, link: str, texto: str, archivos: list[Path]) -> None: ...
     def esperar_resultado(self, controles: Controles) -> str: ...
     def cerrar_compositor(self) -> None: ...
@@ -59,8 +66,17 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
     publicadas = saltadas = 0
 
     def registrar(pub: Publicacion, grupo: Grupo, ubicacion: Path, resultado: str) -> None:
-        historial.agregar(Registro(ahora(), dia, nombre_tira, pub.numero, pub.titulo, grupo.nombre,
-                                   grupo.link, ubicacion.name, resultado))
+        registro = Registro(ahora(), dia, nombre_tira, pub.numero, pub.titulo, grupo.nombre,
+                            grupo.link, ubicacion.name, resultado)
+        while True:
+            try:
+                historial.agregar(registro)
+                return
+            except OSError:
+                resp = ui.preguntar("No se pudo guardar el historial. Si historial.csv está abierto en Excel, "
+                                    "ciérralo y da clic en Reintentar.", [REINTENTAR, "Continuar sin guardar"])
+                if resp != REINTENTAR:
+                    return
 
     def fin(motivo: str) -> Resultado:
         return Resultado(publicadas, saltadas, motivo)
@@ -82,12 +98,15 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
             ui.progreso(indice, total, pub.titulo, grupo.nombre)
             ui.estado(f"Preparando publicación {indice} de {total} en «{grupo.nombre}»…")
 
-            while not fb.sesion_activa():
-                ui.preguntar("Inicia sesión en el navegador y da clic en Continuar", ["Continuar"])
-
             ubicacion = rng.choice(tira.ubicaciones)
             try:
                 fb.preparar_publicacion(grupo.link, pub.texto, [pub.imagen, ubicacion])
+            except SesionCerrada:
+                resp = ui.preguntar("Facebook pide iniciar sesión. Inicia sesión en el navegador y da clic en "
+                                    "Continuar.", ["Continuar", DETENER])
+                if resp == DETENER:
+                    return fin("detenida")
+                continue  # mismo grupo
             except ErrorFacebook as e:
                 ruta = fb.captura(f"error_{nombre_tira}_{pub.numero}")
                 registrar(pub, grupo, ubicacion, "error")

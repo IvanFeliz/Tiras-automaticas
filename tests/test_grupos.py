@@ -52,3 +52,18 @@ def test_lineas_raras(tmp_path):
 
 def test_sin_archivo(tmp_path):
     assert cargar_grupos(tmp_path / "no.txt") == []
+
+
+def test_grupos_guardado_en_ansi(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_bytes(f"Grupo Gómez | {L1}\n".encode("cp1252"))
+    assert cargar_grupos(r)[0].nombre == "Grupo Gómez"
+    marcar_ignorado(r, L1)
+    assert cargar_grupos(r)[0].activo is False
+
+
+def test_grupos_con_bom(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_text(f"# Ignorado | {L1}\nB | {L2}\n", encoding="utf-8-sig")
+    gs = cargar_grupos(r)
+    assert (gs[0].nombre, gs[0].activo) == ("Ignorado", False)

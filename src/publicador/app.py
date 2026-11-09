@@ -15,7 +15,7 @@ from tkinter import filedialog, messagebox, ttk
 from .config import Config, cargar_config, carpeta_datos, guardar_config
 from .grupos import actualizar_grupos, cargar_grupos
 from .historial import Historial
-from .sesion import Controles, ErrorFacebook, ejecutar_tira
+from .sesion import Controles, ErrorFacebook, NavegadorCerrado, ejecutar_tira
 from .tira import Tira, leer_tira, listar_subcarpetas
 
 TITULO = "Publicador de Tiras"
@@ -73,14 +73,26 @@ class Trabajador(threading.Thread):
                     self._grupos()
                 elif cmd[0] == "tira":
                     self._tira(*cmd[1:])
+            except NavegadorCerrado:
+                self._olvidar_navegador()
+                self.cola_ui.put(("fin", "⚠️ Se cerró el navegador. Da clic otra vez para continuar "
+                                         "(se abrirá uno nuevo)."))
             except ErrorFacebook as e:
                 self.cola_ui.put(("fin", f"⚠️ {e}"))
             except Exception as e:
                 with (self.datos / "errores.log").open("a", encoding="utf-8") as f:
                     f.write(traceback.format_exc() + "\n")
-                if self.fb is not None and "closed" in str(e).lower():
-                    self.fb = None  # el navegador se cerró: se abrirá otro la próxima vez
+                if self.fb is not None and self.fb.cerrado:
+                    self._olvidar_navegador()
                 self.cola_ui.put(("fin", f"⚠️ Error inesperado: {e} (detalle en errores.log)"))
+
+    def _olvidar_navegador(self) -> None:
+        if self.fb is not None:
+            try:
+                self.fb.cerrar()
+            except Exception:
+                pass
+        self.fb = None
 
     def _asegurar_sesion(self, fb) -> None:
         while not fb.sesion_activa():

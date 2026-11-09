@@ -185,8 +185,65 @@ def test_sin_grupos(entorno):
     assert any("No hay grupos disponibles" in e for e in ui.estados)
 
 
-def test_pide_login(entorno):
+# --- Correcciones de la revisión final ------------------------------------------------
+from publicador.sesion import NavegadorCerrado, SesionCerrada  # noqa: E402
+
+
+class FBExcepciones(FakeFB):
+    def __init__(self, excepciones, **kw):
+        super().__init__(**kw)
+        self.excepciones = list(excepciones)
+
+    def preparar_publicacion(self, link, texto, archivos):
+        self.preparadas.append((link, texto, archivos))
+        if self.excepciones:
+            raise self.excepciones.pop(0)
+
+
+def test_sesion_cerrada_pide_login_y_reintenta_mismo_grupo(entorno):
     tira, rg, h = entorno(n_pubs=1)
-    ui = FakeUI()
-    _correr(tira, rg, h, FakeFB(sesion=(False, True)), ui)
+    fb, ui = FBExcepciones([SesionCerrada()]), FakeUI(["Continuar"])
+    r = _correr(tira, rg, h, fb, ui)
     assert any("Inicia sesión" in p for p in ui.preguntas)
+    assert fb.preparadas[0][0] == fb.preparadas[1][0]
+    assert [x[2] for x in _resultados(h)] == ["publicado"]
+    assert all(g.activo for g in cargar_grupos(rg))
+    assert r.publicadas == 1
+
+
+def test_sesion_cerrada_y_detener(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb, ui = FBExcepciones([SesionCerrada()]), FakeUI(["Detener"])
+    r = _correr(tira, rg, h, fb, ui)
+    assert r.motivo_fin == "detenida" and _resultados(h) == []
+
+
+def test_navegador_cerrado_no_marca_ni_registra(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb = FBExcepciones([NavegadorCerrado()])
+    with pytest.raises(NavegadorCerrado):
+        _correr(tira, rg, h, fb, FakeUI())
+    assert _resultados(h) == []
+    assert all(g.activo for g in cargar_grupos(rg))
+
+
+class HistorialBloqueado(Historial):
+    def __init__(self, ruta, fallos):
+        super().__init__(ruta)
+        self.fallos = fallos
+
+    def agregar(self, r):
+        if self.fallos:
+            self.fallos -= 1
+            raise PermissionError("historial.csv abierto en Excel")
+        super().agregar(r)
+
+
+def test_historial_bloqueado_por_excel(entorno, tmp_path):
+    tira, rg, _ = entorno(n_pubs=1)
+    h = HistorialBloqueado(tmp_path / "h.csv", fallos=1)
+    ui = FakeUI(["Reintentar"])
+    r = _correr(tira, rg, h, FakeFB(), ui)
+    assert any("Excel" in p for p in ui.preguntas)
+    assert [x[2] for x in _resultados(h)] == ["publicado"]
+    assert r.publicadas == 1

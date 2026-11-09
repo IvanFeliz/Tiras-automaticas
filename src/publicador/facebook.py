@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
-from .sesion import Controles, ErrorFacebook
+from .sesion import Controles, ErrorFacebook, NavegadorCerrado, SesionCerrada
 
 # --- Selectores y textos (ajustar aquí si Facebook cambia) -----------------------------
 URL_TUS_GRUPOS = "https://www.facebook.com/groups/joins/?nav_source=tab"
@@ -36,6 +36,7 @@ _JS_ESCUCHAR_PUBLICAR = """
     while (el && el !== document) {
       const etiqueta = el.getAttribute && el.getAttribute('aria-label');
       const rol = el.getAttribute && el.getAttribute('role');
+      if (el.getAttribute && el.getAttribute('aria-disabled') === 'true') return;
       if (etiqueta === texto || ((rol === 'button' || el.tagName === 'BUTTON') && el.innerText && el.innerText.trim() === texto)) {
         window.__pubClick = true;
         return;
@@ -59,6 +60,11 @@ _JS_PEGAR = """
 _JS_LINKS_GRUPOS = """
 () => Array.from(document.querySelectorAll('a[href*="/groups/"]')).map(a => [a.href, (a.innerText || '').trim()])
 """
+
+
+def _solo_letras(texto: str) -> str:
+    """Solo letras y números, en minúsculas: para comparar sin emojis ni espacios."""
+    return "".join(c for c in (texto or "").lower() if c.isalnum())
 
 
 def normalizar_link_grupo(href: str) -> str | None:
@@ -98,9 +104,21 @@ class Facebook:
         self._dialogo = None
 
     # --- ciclo de vida ---------------------------------------------------------------
+    @property
+    def cerrado(self) -> bool:
+        try:
+            return self.pagina is None or self.pagina.is_closed()
+        except Exception:
+            return True
+
     def abrir(self) -> None:
-        if self.pagina is not None:
+        if not self.cerrado:
             return
+        if self._pw is not None:  # el navegador se cerró a mano: se limpia y se abre otro
+            try:
+                self.cerrar()
+            except Exception:
+                self._ctx = self._pw = self.pagina = self._dialogo = None
         from playwright.sync_api import sync_playwright
 
         self.perfil_dir.mkdir(parents=True, exist_ok=True)
@@ -180,15 +198,19 @@ class Facebook:
     def preparar_publicacion(self, link: str, texto: str, archivos: list[Path]) -> None:
         from playwright.sync_api import Error as ErrorPW
 
+        if self.cerrado:
+            raise NavegadorCerrado()
         try:
             self.pagina.goto(link)
+            if not self.sesion_activa():
+                raise SesionCerrada()
             self._abrir_compositor()
             self.pagina.evaluate(_JS_ESCUCHAR_PUBLICAR, TEXTO_PUBLICAR)
             self._pegar_texto(texto)
             self._adjuntar(archivos)
-        except ErrorFacebook:
-            raise
         except ErrorPW as e:
+            if self.cerrado or "closed" in str(e).lower():
+                raise NavegadorCerrado() from e
             raise ErrorFacebook(f"Facebook no respondió como se esperaba ({e.__class__.__name__})") from e
 
     def _abrir_compositor(self) -> None:
@@ -211,12 +233,20 @@ class Facebook:
     def _pegar_texto(self, texto: str) -> None:
         editor = self._dialogo.locator(SEL_EDITOR).first
         editor.click()
-        resultado = editor.evaluate(_JS_PEGAR, texto)
-        primera = texto.strip().splitlines()[0][:20] if texto.strip() else ""
-        if primera and primera not in (resultado or ""):
-            # Respaldo: escribir como si se tecleara.
-            editor.click()
-            self.pagina.keyboard.insert_text(texto)
+        editor.evaluate(_JS_PEGAR, texto)
+        muestra = _solo_letras(texto)[:30]
+        if not muestra:
+            return
+        # Facebook (Lexical) aplica el pegado un instante después: se espera antes de revisar.
+        for _ in range(8):
+            self.pagina.wait_for_timeout(200)
+            if muestra in _solo_letras(editor.inner_text()):
+                return
+        # Respaldo: se borra lo que haya y se escribe como si se tecleara.
+        editor.click()
+        self.pagina.keyboard.press("Control+A")
+        self.pagina.keyboard.press("Delete")
+        self.pagina.keyboard.insert_text(texto)
 
     def _adjuntar(self, archivos: list[Path]) -> None:
         entrada = self._dialogo.locator(SEL_INPUT_ARCHIVOS)
@@ -246,17 +276,27 @@ class Facebook:
 
     def esperar_resultado(self, controles: Controles) -> str:
         while True:
+            if self.cerrado:
+                raise NavegadorCerrado()
+            # Primero se revisa si ya se publicó: gana a un «Saltar» apretado justo después.
+            if not self._dialogo_abierto():
+                if self.cerrado:
+                    raise NavegadorCerrado()
+                try:
+                    publicado = bool(self.pagina.evaluate("window.__pubClick === true"))
+                except Exception:
+                    if self.cerrado:
+                        raise NavegadorCerrado()
+                    publicado = False
+                return "publicado" if publicado else "cerrado"
             if controles.detener.is_set():
                 return "detener"
             if controles.saltar.is_set():
                 return "saltar"
-            if not self._dialogo_abierto():
-                try:
-                    publicado = bool(self.pagina.evaluate("window.__pubClick === true"))
-                except Exception:
-                    publicado = False
-                return "publicado" if publicado else "cerrado"
-            self.pagina.wait_for_timeout(500)
+            try:
+                self.pagina.wait_for_timeout(500)
+            except Exception as e:
+                raise NavegadorCerrado() from e
 
     def cerrar_compositor(self) -> None:
         if not self._dialogo_abierto():

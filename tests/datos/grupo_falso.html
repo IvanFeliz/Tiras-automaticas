@@ -13,12 +13,16 @@ document.getElementById('abrir').addEventListener('click', () => {
     <div contenteditable="true" role="textbox" id="ed"></div>
     <input type="file" multiple accept="image/*,video/*" id="archivos">
     <div id="previas"></div>
+    <div role="button" aria-label="Publicar" aria-disabled="true" tabindex="-1" id="publicar-desactivado"><span>Publicar</span></div>
     <div role="button" aria-label="Publicar" tabindex="0" id="publicar"><span>Publicar</span></div>`;
   document.body.appendChild(d);
   const ed = d.querySelector('#ed');
   ed.addEventListener('paste', (e) => {
     e.preventDefault();
-    ed.innerText = e.clipboardData.getData('text/plain');
+    const t = e.clipboardData.getData('text/plain');
+    // ?lento=1 imita a Lexical: el pegado se aplica después, no al instante.
+    if (location.search.includes('lento=1')) setTimeout(() => { ed.innerText += t; }, 100);
+    else ed.innerText = t;
   });
   d.querySelector('#archivos').addEventListener('change', (e) => {
     const p = d.querySelector('#previas');

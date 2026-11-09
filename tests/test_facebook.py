@@ -100,3 +100,45 @@ def test_sesion_activa(fb, tmp_path):
     assert fb.sesion_activa() is False
     fb.pagina.goto((DATOS / "grupo_falso.html").as_uri())
     assert fb.sesion_activa() is True
+
+
+# --- Correcciones de la revisión final ------------------------------------------------
+from publicador.sesion import NavegadorCerrado, SesionCerrada  # noqa: E402
+
+
+def test_pegado_lento_no_duplica(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?lento=1"
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    fb.pagina.wait_for_timeout(500)
+    assert fb.pagina.evaluate("document.querySelector('#ed').innerText") == TEXTO
+
+
+def test_clic_en_publicar_desactivado_no_cuenta(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    fb.pagina.locator("#publicar-desactivado").click(force=True)
+    fb.pagina.keyboard.press("Escape")
+    assert fb.esperar_resultado(Controles()) == "cerrado"
+
+
+def test_publicado_gana_a_saltar(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    fb.pagina.locator("#publicar").click()
+    c = Controles()
+    c.saltar.set()
+    assert fb.esperar_resultado(c) == "publicado"
+
+
+def test_sesion_cerrada_despues_de_abrir_grupo(fb, tmp_path):
+    login = tmp_path / "login.html"
+    login.write_text('<html><body><input name="email"></body></html>', encoding="utf-8")
+    with pytest.raises(SesionCerrada):
+        fb.preparar_publicacion(login.as_uri(), TEXTO, _archivos(tmp_path))
+
+
+def test_navegador_cerrado_a_mano(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    fb.pagina.close()
+    with pytest.raises(NavegadorCerrado):
+        fb.esperar_resultado(Controles())
+    with pytest.raises(NavegadorCerrado):
+        fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
