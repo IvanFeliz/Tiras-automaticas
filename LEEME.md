@@ -5,9 +5,11 @@ texto y sube la imagen y la foto de ubicación. **Tú solo revisas y das clic en
 
 ## 1. Descargarlo
 
-1. En GitHub, entra a la pestaña **Actions** de este repositorio.
-2. Abre la ejecución más reciente que tenga ✅ verde.
-3. Hasta abajo, en **Artifacts**, descarga **PublicadorTiras**. Es un `.zip`: descomprímelo completo
+1. Descarga la última versión desde este link:
+   https://github.com/IvanFeliz/Tiras-automaticas/releases/latest/download/PublicadorTiras.zip
+   (o entra a la sección **Releases** del repositorio y descarga `PublicadorTiras.zip`).
+2. **No** uses el botón verde «Code → Download ZIP»: ese es el código, no el programa.
+3. El archivo es un `.zip`: descomprímelo completo
    (clic derecho → **Extraer todo…**). Te queda una carpeta con `PublicadorTiras.exe` y una subcarpeta
    `_internal`. **No saques el `.exe` de esa carpeta**: necesita lo que está en `_internal`.
    Puedes poner la carpeta donde quieras y crear un acceso directo al `.exe` en el Escritorio

@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write  # para publicar la versión descargable en Releases
 
 jobs:
   windows:
@@ -36,3 +36,13 @@ jobs:
         with:
           name: PublicadorTiras
           path: dist/PublicadorTiras/
+
+      # En main: se publica en Releases con link fijo de descarga.
+      - name: Publicar versión descargable
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path dist/PublicadorTiras -DestinationPath PublicadorTiras.zip
+          $tag = "v1.0.${{ github.run_number }}"
+          gh release create $tag PublicadorTiras.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Publicador de Tiras $tag" --notes "Descarga PublicadorTiras.zip, descomprímelo (clic derecho, Extraer todo) y abre PublicadorTiras.exe dentro de la carpeta." --latest
