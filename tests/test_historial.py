@@ -63,3 +63,38 @@ def test_historial_guardado_desde_excel(tmp_path):
     h2 = Historial(ruta)
     assert h2.publicadas("1.lunes", "TIRA 1", date(2026, 11, 9)) == {1: "L1", 2: "L2"}
     assert ruta.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+# --- Por cuenta ---------------------------------------------------------------------
+def _rc(t, numero, link, resultado, cuenta, tira="TIRA 1"):
+    return Registro(t, "1.lunes", tira, numero, f"T{numero}", "G", link, "u", resultado, cuenta)
+
+
+def test_filas_viejas_son_de_la_principal(tmp_path):
+    ruta = tmp_path / "h.csv"
+    ruta.write_text("fecha_hora,dia,tira,numero,titulo,grupo,link_grupo,archivo_ubicacion,resultado\n"
+                    "2026-11-09 10:00:00,1.lunes,TIRA 1,1,T,G,L1,u,publicado\n", encoding="utf-8-sig")
+    h = Historial(ruta, cuenta_principal="Yo")
+    assert h.ultimas_publicaciones("Yo") == {"L1": datetime(2026, 11, 9, 10)}
+    assert h.ultimas_publicaciones("Sucursal") == {}
+    h.agregar(_rc(datetime(2026, 11, 9, 11), 2, "L2", "publicado", "Sucursal"))
+    texto = ruta.read_text(encoding="utf-8-sig")
+    assert texto.splitlines()[0].endswith(",cuenta")
+    h2 = Historial(ruta, cuenta_principal="Yo")
+    assert h2.ultimas_publicaciones("Yo") == {"L1": datetime(2026, 11, 9, 10)}
+    assert h2.ultimas_publicaciones("Sucursal") == {"L2": datetime(2026, 11, 9, 11)}
+
+
+def test_filtros_por_cuenta(tmp_path):
+    h = Historial(tmp_path / "h.csv", cuenta_principal="Yo")
+    t = datetime(2026, 11, 9, 10)
+    h.agregar(_rc(t, 1, "L1", "publicado", "Yo"))
+    h.agregar(_rc(t, 2, "L2", "publicado", "Suc"))
+    h.agregar(_rc(t, 3, "L3", "saltado", "Suc"))
+    h.agregar(_rc(t, 0, "", "bloqueo", "Suc"))
+    assert h.publicadas("1.lunes", "TIRA 1", t.date()) == {1: "L1", 2: "L2"}  # sin importar cuenta
+    assert h.grupos_usados("1.lunes", "TIRA 1", t.date(), cuenta="Suc") == {"L2", "L3"}
+    assert h.publicadas_hoy_cuenta("Suc", t.date()) == 1
+    assert h.bloqueada_hoy("Suc", t.date()) is True
+    assert h.bloqueada_hoy("Yo", t.date()) is False
+    assert h.ultimas_publicaciones() == {"L1": t, "L2": t}

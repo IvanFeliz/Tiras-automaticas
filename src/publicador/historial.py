@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-CAMPOS = ["fecha_hora", "dia", "tira", "numero", "titulo", "grupo", "link_grupo", "archivo_ubicacion", "resultado"]
+CAMPOS = ["fecha_hora", "dia", "tira", "numero", "titulo", "grupo", "link_grupo", "archivo_ubicacion", "resultado",
+          "cuenta"]
 FORMATO = "%Y-%m-%d %H:%M:%S"
 # Formatos que deja Excel si alguien guarda el archivo desde ahí.
 FORMATOS_LECTURA = (FORMATO, "%Y-%m-%d %H:%M", "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%y %H:%M")
@@ -32,12 +33,15 @@ class Registro:
     grupo: str
     link_grupo: str
     archivo_ubicacion: str
-    resultado: str  # publicado | saltado | error
+    resultado: str  # publicado | saltado | error | bloqueo
+    cuenta: str = ""
 
 
 class Historial:
-    def __init__(self, ruta: Path):
+    def __init__(self, ruta: Path, cuenta_principal: str = ""):
         self.ruta = Path(ruta)
+        # Las filas de antes (sin columna cuenta) se consideran de la cuenta principal.
+        self.cuenta_principal = cuenta_principal
 
     def _leer_crudo(self) -> tuple[str, bool]:
         """Devuelve (texto, normal). normal=False si Excel lo guardó en ANSI o con ';'."""
@@ -58,7 +62,8 @@ class Historial:
         if not self.ruta.exists() or self.ruta.stat().st_size == 0:
             return
         texto, normal = self._leer_crudo()
-        if normal:
+        encabezado = texto.split("\n", 1)[0]
+        if normal and "cuenta" in encabezado:
             return
         filas = self._filas()
         tmp = self.ruta.with_suffix(".csv.tmp")
@@ -82,7 +87,7 @@ class Historial:
             w.writerow({
                 "fecha_hora": r.fecha_hora.strftime(FORMATO), "dia": r.dia, "tira": r.tira,
                 "numero": r.numero, "titulo": r.titulo, "grupo": r.grupo, "link_grupo": r.link_grupo,
-                "archivo_ubicacion": r.archivo_ubicacion, "resultado": r.resultado,
+                "archivo_ubicacion": r.archivo_ubicacion, "resultado": r.resultado, "cuenta": r.cuenta,
             })
 
     def _filas(self) -> list[dict]:
@@ -99,16 +104,18 @@ class Historial:
             fila["_fecha"] = fecha
             for k in CAMPOS:
                 fila[k] = fila.get(k) or ""
+            fila["_cuenta"] = fila["cuenta"] or self.cuenta_principal
             filas.append(fila)
         return filas
 
-    def ultimas_publicaciones(self) -> dict[str, datetime]:
+    def ultimas_publicaciones(self, cuenta: str | None = None) -> dict[str, datetime]:
         res: dict[str, datetime] = {}
         for f in self._filas():
-            if f["resultado"] == "publicado":
-                link = f["link_grupo"]
-                if link not in res or f["_fecha"] > res[link]:
-                    res[link] = f["_fecha"]
+            if f["resultado"] != "publicado" or (cuenta is not None and f["_cuenta"] != cuenta):
+                continue
+            link = f["link_grupo"]
+            if link not in res or f["_fecha"] > res[link]:
+                res[link] = f["_fecha"]
         return res
 
     def ultima_publicacion(self, link: str) -> datetime | None:
@@ -127,5 +134,15 @@ class Historial:
                     pass
         return res
 
-    def grupos_usados(self, dia: str, tira: str, fecha: date) -> set[str]:
-        return {f["link_grupo"] for f in self._de_tira(dia, tira, fecha)}
+    def grupos_usados(self, dia: str, tira: str, fecha: date, cuenta: str | None = None) -> set[str]:
+        return {f["link_grupo"] for f in self._de_tira(dia, tira, fecha)
+                if f["link_grupo"] and (cuenta is None or f["_cuenta"] == cuenta)}
+
+    def _de_cuenta_hoy(self, cuenta: str, fecha: date):
+        return (f for f in self._filas() if f["_cuenta"] == cuenta and f["_fecha"].date() == fecha)
+
+    def publicadas_hoy_cuenta(self, cuenta: str, fecha: date) -> int:
+        return sum(1 for f in self._de_cuenta_hoy(cuenta, fecha) if f["resultado"] == "publicado")
+
+    def bloqueada_hoy(self, cuenta: str, fecha: date) -> bool:
+        return any(f["resultado"] == "bloqueo" for f in self._de_cuenta_hoy(cuenta, fecha))
