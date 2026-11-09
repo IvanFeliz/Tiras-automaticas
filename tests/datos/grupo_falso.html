@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><title>Grupo falso</title>
+<body>
+<div role="button" tabindex="0" id="abrir">Escribe algo...</div>
+<script>
+// Imita el compositor de Facebook: diálogo con contenteditable (maneja 'paste' como Lexical),
+// input de archivos y botón Publicar que cierra el diálogo.
+document.getElementById('abrir').addEventListener('click', () => {
+  const d = document.createElement('div');
+  d.setAttribute('role', 'dialog');
+  d.innerHTML = `
+    <h2>Crear publicación</h2>
+    <div contenteditable="true" role="textbox" id="ed"></div>
+    <input type="file" multiple accept="image/*,video/*" id="archivos">
+    <div id="previas"></div>
+    <div role="button" aria-label="Publicar" tabindex="0" id="publicar"><span>Publicar</span></div>`;
+  document.body.appendChild(d);
+  const ed = d.querySelector('#ed');
+  ed.addEventListener('paste', (e) => {
+    e.preventDefault();
+    ed.innerText = e.clipboardData.getData('text/plain');
+  });
+  d.querySelector('#archivos').addEventListener('change', (e) => {
+    const p = d.querySelector('#previas');
+    const bar = document.createElement('div');
+    bar.setAttribute('role', 'progressbar');
+    p.appendChild(bar);
+    setTimeout(() => {
+      bar.remove();
+      window.__subidos = Array.from(e.target.files).map(f => f.name);
+    }, 300);
+  });
+  d.querySelector('#publicar').addEventListener('click', () => {
+    window.__textoPublicado = ed.innerText;
+    d.remove();
+  });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') d.remove(); });
+});
+</script>
+</body></html>

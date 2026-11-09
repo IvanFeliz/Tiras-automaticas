@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><title>Tus grupos</title>
+<body>
+<a href="https://www.facebook.com/groups/feed/">Tu feed</a>
+<a href="https://www.facebook.com/groups/discover/">Descubrir</a>
+<div id="lista"></div>
+<script>
+let n = 0;
+function cargar() {
+  const lista = document.getElementById('lista');
+  for (let i = 0; i < 10 && n < 25; i++, n++) {
+    const a = document.createElement('a');
+    a.href = `https://www.facebook.com/groups/${1000 + n}/?ref=bookmarks`;
+    a.textContent = `Grupo ${n}`;
+    const img = document.createElement('a');
+    img.href = a.href; // link de imagen sin texto, como en Facebook
+    lista.appendChild(img); lista.appendChild(a);
+    const sp = document.createElement('div'); sp.style.height = '200px'; lista.appendChild(sp);
+  }
+}
+cargar();
+window.addEventListener('scroll', () => {
+  if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 50) cargar();
+});
+</script>
+</body></html>
