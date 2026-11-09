@@ -12,6 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from . import estilo
 from .config import (Config, ajustar_espera, bloquear_instancia, cargar_config, carpeta_datos,
                      guardar_config)
 from .cuentas import Cuenta, cargar_cuentas, guardar_cuentas, migrar_grupos, principal, ruta_grupos
@@ -207,108 +208,186 @@ class App:
         self.root.after(100, self._procesar_cola)
 
     # --- construcción ----------------------------------------------------------------
+    def _tarjeta(self, padre, titulo: str, ayuda: str = "") -> ttk.Frame:
+        """Una tarjeta con título y una frase de ayuda. Devuelve el marco interior."""
+        borde = tk.Frame(padre, background=estilo.BORDE, padx=1, pady=1)
+        borde.pack(fill="x", padx=14, pady=(8, 0))
+        caja = ttk.Frame(borde, style="Panel.TFrame", padding=(12, 8))
+        caja.pack(fill="both", expand=True)
+        ttk.Label(caja, text=titulo, style="Seccion.Panel.TLabel").pack(anchor="w")
+        if ayuda:
+            ttk.Label(caja, text=ayuda, style="Suave.Panel.TLabel", wraplength=680, justify="left").pack(
+                anchor="w", pady=(0, 4))
+        interior = ttk.Frame(caja, style="Panel.TFrame")
+        interior.pack(fill="both", expand=True)
+        return interior
+
     def _construir(self) -> None:
         r = self.root
         r.title(TITULO)
-        r.minsize(560, 560)
-        marco = ttk.Frame(r, padding=12)
-        marco.pack(fill="both", expand=True)
-        marco.columnconfigure(1, weight=1)
+        r.minsize(740, 700)
+        r.geometry("780x730")
+        self.fuentes = estilo.aplicar_estilo(r)
 
-        ttk.Label(marco, text="Carpeta:").grid(row=0, column=0, sticky="w")
-        self.var_carpeta = tk.StringVar(value=self.cfg.carpeta_tiras or "(sin escoger)")
-        ttk.Label(marco, textvariable=self.var_carpeta, foreground="#444").grid(row=0, column=1, sticky="w", padx=6)
-        self.btn_cambiar = ttk.Button(marco, text="Cambiar", command=self._cambiar_carpeta)
-        self.btn_cambiar.grid(row=0, column=2, sticky="e")
+        # Encabezado
+        cab = tk.Frame(r, background=estilo.AZUL_OSCURO, padx=18, pady=12)
+        cab.pack(fill="x")
+        tk.Label(cab, text="📢  Publicador de Tiras", background=estilo.AZUL_OSCURO, foreground="white",
+                 font=self.fuentes["titulo"]).pack(side="left")
+        self.var_cabecera = tk.StringVar()
+        tk.Label(cab, textvariable=self.var_cabecera, background=estilo.AZUL_OSCURO, foreground="#a5c8ff",
+                 font=self.fuentes["base"]).pack(side="right")
 
-        fila = ttk.Frame(marco)
-        fila.grid(row=1, column=0, columnspan=3, sticky="we", pady=(8, 0))
-        ttk.Label(fila, text="Cuenta:").pack(side="left")
-        self.combo_cuenta = ttk.Combobox(fila, state="readonly", width=34)
-        self.combo_cuenta.pack(side="left", padx=4)
+        self.pestanas = ttk.Notebook(r)
+        self.pestanas.pack(fill="both", expand=True, pady=(4, 0))
+        pub = ttk.Frame(self.pestanas)
+        cue = ttk.Frame(self.pestanas)
+        aju = ttk.Frame(self.pestanas)
+        self.pestanas.add(pub, text="📢 Publicar")
+        self.pestanas.add(cue, text="👤 Cuentas y grupos")
+        self.pestanas.add(aju, text="⚙️ Ajustes")
+        self._construir_publicar(pub)
+        self._construir_cuentas(cue)
+        self._construir_ajustes(aju)
+
+    def _construir_publicar(self, pub) -> None:
+        # ① Cuenta
+        c = self._tarjeta(pub, "①  ¿Con qué cuenta publico?")
+        self.combo_cuenta = ttk.Combobox(c, state="readonly", width=40)
+        self.combo_cuenta.pack(anchor="w")
         self.combo_cuenta.bind("<<ComboboxSelected>>", lambda e: self._cuenta_elegida())
-        self.btn_cuentas = ttk.Button(fila, text="Actualizar cuentas", command=self._actualizar_cuentas)
-        self.btn_cuentas.pack(side="right")
 
-        fila = ttk.Frame(marco)
-        fila.grid(row=2, column=0, columnspan=3, sticky="we", pady=(8, 0))
-        ttk.Label(fila, text="Día:").pack(side="left")
+        # ② Tira
+        t = self._tarjeta(pub, "②  ¿Qué tira publico?")
+        fila = ttk.Frame(t, style="Panel.TFrame")
+        fila.pack(fill="x")
+        ttk.Label(fila, text="Día", style="Panel.TLabel").pack(side="left")
         self.combo_dia = ttk.Combobox(fila, state="readonly", width=16)
-        self.combo_dia.pack(side="left", padx=(4, 12))
+        self.combo_dia.pack(side="left", padx=(6, 14))
         self.combo_dia.bind("<<ComboboxSelected>>", lambda e: self._dia_elegido())
-        ttk.Label(fila, text="Tira:").pack(side="left")
+        ttk.Label(fila, text="Tira", style="Panel.TLabel").pack(side="left")
         self.combo_tira = ttk.Combobox(fila, state="readonly", width=12)
-        self.combo_tira.pack(side="left", padx=4)
+        self.combo_tira.pack(side="left", padx=6)
         self.combo_tira.bind("<<ComboboxSelected>>", lambda e: self._tira_elegida())
-        self.btn_escoger = ttk.Button(fila, text="Escoger carpeta…", command=self._escoger_carpeta_tira)
+        self.btn_escoger = ttk.Button(fila, text="📁 Escoger carpeta…", command=self._escoger_carpeta_tira)
         self.btn_escoger.pack(side="right")
-
-        self.resumen = tk.Text(marco, height=15, wrap="none", relief="solid", borderwidth=1)
-        self.resumen.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=8)
-        self.resumen.tag_configure("error", foreground="#b00020")
-        self.resumen.tag_configure("titulo", font=("TkDefaultFont", 10, "bold"))
+        self.var_chip = tk.StringVar(value="Escoge una tira.")
+        self.lbl_chip = tk.Label(t, textvariable=self.var_chip, anchor="w", padx=8, pady=4,
+                                 font=self.fuentes["base"], background=estilo.PANEL_2, foreground=estilo.TEXTO_SUAVE)
+        self.lbl_chip.pack(fill="x", pady=(8, 4))
+        self.resumen = tk.Text(t, height=5, wrap="none", relief="flat", borderwidth=0, padx=8, pady=6,
+                               background=estilo.FONDO, foreground=estilo.TEXTO, insertbackground=estilo.TEXTO,
+                               font=self.fuentes["lista"], highlightthickness=0)
+        self.resumen.pack(fill="both", expand=True)
+        self.resumen.tag_configure("error", foreground="#ff7b72")
+        self.resumen.tag_configure("titulo", foreground="#a5c8ff", font=self.fuentes["seccion"])
+        self.resumen.tag_configure("suave", foreground=estilo.TEXTO_SUAVE)
         self.resumen.configure(state="disabled")
-        marco.rowconfigure(3, weight=1)
 
-        fila = ttk.Frame(marco)
-        fila.grid(row=4, column=0, columnspan=3, sticky="we")
-        self.btn_grupos = ttk.Button(fila, text="Actualizar grupos", command=self._actualizar_grupos)
-        self.btn_grupos.pack(side="left")
-        self.var_grupos = tk.StringVar()
-        ttk.Label(fila, textvariable=self.var_grupos).pack(side="left", padx=8)
-        ttk.Button(fila, text="Abrir carpeta de datos", command=self._abrir_datos).pack(side="right")
-
-        fila = ttk.Frame(marco)
-        fila.grid(row=5, column=0, columnspan=3, sticky="we", pady=(6, 0))
-        ttk.Label(fila, text="Minutos antes de repetir un grupo:").pack(side="left")
-        self.var_minutos = tk.IntVar(value=self.cfg.minutos_entre_publicaciones)
-        ttk.Spinbox(fila, from_=0, to=1440, increment=15, width=6, textvariable=self.var_minutos,
-                    command=self._guardar_minutos).pack(side="left", padx=4)
-
-        fila = ttk.Frame(marco)
-        fila.grid(row=6, column=0, columnspan=3, sticky="we", pady=(6, 0))
+        # ③ Cómo publicar
+        m = self._tarjeta(pub, "③  ¿Cómo publico?")
+        fila = ttk.Frame(m, style="Panel.TFrame")
+        fila.pack(fill="x")
         self.var_modo = tk.StringVar(value=self.cfg.modo)
         self.controles_ritmo: list = []
-        r1 = ttk.Radiobutton(fila, text="Con revisión (tú das clic)", variable=self.var_modo, value="revision",
-                             command=self._cambio_ritmo)
-        r1.pack(side="left")
-        r2 = ttk.Radiobutton(fila, text="Automático", variable=self.var_modo, value="automatico",
-                             command=self._cambio_ritmo)
-        r2.pack(side="left", padx=(8, 12))
-        self.controles_ritmo += [r1, r2]
-        ttk.Label(fila, text="Esperar entre").pack(side="left")
+        for texto, valor in (("👀 Con revisión", "revision"), ("⚡ Automático", "automatico")):
+            rb = ttk.Radiobutton(fila, text=texto, variable=self.var_modo, value=valor, command=self._cambio_ritmo,
+                                 style="Panel.TRadiobutton")
+            rb.pack(side="left", padx=(0, 16))
+            self.controles_ritmo.append(rb)
+        ttk.Label(fila, text="Esperar entre", style="Panel.TLabel").pack(side="left")
         self.var_espera_min = tk.IntVar(value=self.cfg.espera_min)
         self.var_espera_max = tk.IntVar(value=self.cfg.espera_max)
         for var, texto in ((self.var_espera_min, "y"), (self.var_espera_max, "minutos")):
             caja = ttk.Spinbox(fila, from_=2, to=240, width=4, textvariable=var, command=self._cambio_ritmo)
-            caja.pack(side="left", padx=3)
-            self.controles_ritmo.append(caja)
+            caja.pack(side="left", padx=4)
             caja.bind("<FocusOut>", lambda e: self._cambio_ritmo())
             caja.bind("<KeyRelease>", lambda e: self._revisar_riesgo())
-            ttk.Label(fila, text=texto).pack(side="left")
-
+            self.controles_ritmo.append(caja)
+            ttk.Label(fila, text=texto, style="Panel.TLabel").pack(side="left")
         self.var_aviso = tk.StringVar()
-        self.lbl_aviso = tk.Label(marco, textvariable=self.var_aviso, wraplength=540, justify="left", anchor="w",
-                                  padx=6, pady=3)
-        self.lbl_aviso.grid(row=7, column=0, columnspan=3, sticky="we", pady=(6, 0))
-        self._fondo_normal = self.lbl_aviso.cget("background")
+        self.lbl_aviso = tk.Label(m, textvariable=self.var_aviso, wraplength=680, justify="left", anchor="w",
+                                  padx=8, pady=0, font=self.fuentes["base"], background=estilo.PANEL)
+        self.lbl_aviso.pack(fill="x", pady=(8, 0))
 
-        self.btn_empezar = ttk.Button(marco, text="▶  Empezar", command=self._empezar, state="disabled")
-        self.btn_empezar.grid(row=8, column=0, columnspan=3, pady=10, ipadx=20, ipady=4)
-
-        self.var_progreso = tk.StringVar()
-        ttk.Label(marco, textvariable=self.var_progreso, font=("TkDefaultFont", 10, "bold")).grid(
-            row=9, column=0, columnspan=3, sticky="w")
-        self.var_estado = tk.StringVar(value="Escoge una tira para empezar.")
-        ttk.Label(marco, textvariable=self.var_estado, wraplength=520).grid(row=10, column=0, columnspan=3, sticky="w")
-
-        fila = ttk.Frame(marco)
-        fila.grid(row=11, column=0, columnspan=3, pady=(8, 0))
-        self.btn_saltar = ttk.Button(fila, text="Saltar este grupo", state="disabled",
+        # ④ Empezar y progreso
+        p = self._tarjeta(pub, "④  ¡A publicar!")
+        fila = ttk.Frame(p, style="Panel.TFrame")
+        fila.pack(fill="x", pady=(0, 6))
+        self.btn_empezar = ttk.Button(fila, text="▶  EMPEZAR", style="Grande.Azul.TButton", command=self._empezar,
+                                      state="disabled")
+        self.btn_empezar.pack(side="left")
+        self.btn_detener = ttk.Button(fila, text="⏹ Detener", style="Rojo.TButton", state="disabled",
+                                      command=self._detener)
+        self.btn_detener.pack(side="right")
+        self.btn_saltar = ttk.Button(fila, text="⏭ Saltar grupo", state="disabled",
                                      command=lambda: self.controles.saltar.set())
-        self.btn_saltar.pack(side="left", padx=6)
-        self.btn_detener = ttk.Button(fila, text="Detener", state="disabled", command=self._detener)
-        self.btn_detener.pack(side="left", padx=6)
+        self.btn_saltar.pack(side="right", padx=6)
+        self.var_progreso = tk.StringVar(value="Todavía no empieza.")
+        ttk.Label(p, textvariable=self.var_progreso, style="Grande.Panel.TLabel", wraplength=680,
+                  justify="left").pack(anchor="w")
+        self.barra = ttk.Progressbar(p, style="Azul.Horizontal.TProgressbar", mode="determinate", maximum=12)
+        self.barra.pack(fill="x", pady=6)
+        self.var_estado = tk.StringVar(value="Escoge una tira para empezar.")
+        ttk.Label(p, textvariable=self.var_estado, style="Suave.Panel.TLabel", wraplength=680,
+                  justify="left").pack(anchor="w")
+
+    def _construir_cuentas(self, cue) -> None:
+        c = self._tarjeta(cue, "Cuentas de Facebook",
+                          "El programa lee las cuentas del menú de tu foto en Facebook: el perfil de la empresa y "
+                          "sus Páginas (una por sucursal). Hazlo una vez, o cuando agreguen otra Página.")
+        self.lista_cuentas = tk.Listbox(c, height=5, activestyle="none", relief="flat", highlightthickness=0,
+                                        background=estilo.FONDO, foreground=estilo.TEXTO,
+                                        selectbackground=estilo.AZUL, font=self.fuentes["lista"])
+        self.lista_cuentas.pack(fill="x", pady=(0, 8))
+        self.btn_cuentas = ttk.Button(c, text="🔄 Actualizar cuentas", style="Azul.TButton",
+                                      command=self._actualizar_cuentas)
+        self.btn_cuentas.pack(anchor="w")
+
+        g = self._tarjeta(cue, "Grupos de la cuenta escogida",
+                          "Cada cuenta tiene sus propios grupos: una Página solo puede publicar en los grupos a "
+                          "los que ella se unió. Si una cuenta no puede publicar en un grupo, se ignora solo para "
+                          "esa cuenta.")
+        self.var_cuenta_grupos = tk.StringVar()
+        ttk.Label(g, textvariable=self.var_cuenta_grupos, style="Grande.Panel.TLabel").pack(anchor="w")
+        self.var_grupos = tk.StringVar()
+        ttk.Label(g, textvariable=self.var_grupos, style="Panel.TLabel").pack(anchor="w", pady=(2, 8))
+        self.btn_grupos = ttk.Button(g, text="🔄 Actualizar grupos", style="Azul.TButton",
+                                     command=self._actualizar_grupos)
+        self.btn_grupos.pack(anchor="w")
+
+    def _construir_ajustes(self, aju) -> None:
+        c = self._tarjeta(aju, "Carpeta de las tiras", "La carpeta que tiene los días (1.lunes, 2 MARTES…).")
+        fila = ttk.Frame(c, style="Panel.TFrame")
+        fila.pack(fill="x")
+        self.var_carpeta = tk.StringVar(value=self.cfg.carpeta_tiras or "(sin escoger)")
+        ttk.Label(fila, textvariable=self.var_carpeta, style="Panel.TLabel").pack(side="left")
+        self.btn_cambiar = ttk.Button(fila, text="📁 Cambiar", command=self._cambiar_carpeta)
+        self.btn_cambiar.pack(side="right")
+
+        g = self._tarjeta(aju, "Repetir grupos",
+                          "Cuánto tiempo debe pasar antes de volver a publicar en el mismo grupo con la misma cuenta.")
+        fila = ttk.Frame(g, style="Panel.TFrame")
+        fila.pack(fill="x")
+        self.var_minutos = tk.IntVar(value=self.cfg.minutos_entre_publicaciones)
+        ttk.Spinbox(fila, from_=0, to=1440, increment=15, width=6, textvariable=self.var_minutos,
+                    command=self._guardar_minutos).pack(side="left")
+        ttk.Label(fila, text="minutos", style="Panel.TLabel").pack(side="left", padx=6)
+
+        a = self._tarjeta(aju, "Archivos", "Historial de lo publicado, lista de grupos, capturas de errores.")
+        fila = ttk.Frame(a, style="Panel.TFrame")
+        fila.pack(fill="x")
+        ttk.Button(fila, text="📂 Abrir carpeta de datos", command=self._abrir_datos).pack(side="left")
+        ttk.Button(fila, text="📊 Abrir historial (Excel)", command=self._abrir_historial).pack(side="left", padx=8)
+
+        h = self._tarjeta(aju, "Guía rápida")
+        for linea in ("👀  Con revisión: el programa deja todo listo y tú das clic en «Publicar» en Facebook.",
+                      "⚡  Automático: el programa publica solo y espera los minutos que pongas entre una y otra.",
+                      "🟡  Cuidado: el riesgo de bloqueo va subiendo (ritmo rápido, muchas publicaciones, errores).",
+                      "🔴  Peligro: riesgo alto de bloqueo. Conviene bajar el ritmo o parar.",
+                      "⛔  Facebook bloqueó o pidió verificación: la tira se detiene; puedes seguir con otra cuenta.",
+                      "💡  Consejo: prueba cada cuenta nueva primero «Con revisión» con 1 o 2 publicaciones."):
+            ttk.Label(h, text=linea, style="Panel.TLabel", wraplength=680, justify="left").pack(anchor="w", pady=2)
 
     # --- cuentas -----------------------------------------------------------------------
     def _principal(self) -> str:
@@ -333,6 +412,11 @@ class App:
     def _cargar_cuentas_en_combo(self) -> None:
         nombres = [c.nombre for c in self.cuentas]
         self.combo_cuenta["values"] = nombres
+        self.lista_cuentas.delete(0, "end")
+        for c in self.cuentas:
+            self.lista_cuentas.insert("end", f"  {'👤 Perfil' if c.tipo == 'perfil' else '🏪 Página'}   {c.nombre}")
+        if not self.cuentas:
+            self.lista_cuentas.insert("end", "  (todavía no hay cuentas: da clic en «Actualizar cuentas»)")
         if self._ultima_cuenta in nombres:
             self.combo_cuenta.set(self._ultima_cuenta)
         elif nombres:
@@ -414,9 +498,9 @@ class App:
             self._mostrar_aviso("", "")
 
     def _mostrar_aviso(self, nivel: str, mensaje: str) -> None:
-        colores = {"amarillo": "#fff3cd", "rojo": "#f8d7da"}
+        fondo, texto = estilo.AVISOS.get(nivel if mensaje else "", estilo.AVISOS[""])
         self.var_aviso.set(mensaje)
-        self.lbl_aviso.configure(background=colores.get(nivel, self._fondo_normal))
+        self.lbl_aviso.configure(background=fondo, foreground=texto, pady=6 if mensaje else 0)
 
     def _ritmo(self) -> Ritmo:
         return Ritmo(self.cfg.modo, self.cfg.espera_min, self.cfg.espera_max)
@@ -495,19 +579,51 @@ class App:
             for e in tira.errores:
                 t.insert("end", f"⚠️ {e}\n", "error")
             self.var_estado.set("Listo para empezar." if tira.ok else "Corrige los problemas marcados en rojo.")
+            if tira.ok:
+                faltan = len(tira.publicaciones) - len(ya)
+                extra = f" (hoy ya van {len(ya)}, faltan {faltan})" if ya else ""
+                self._chip("verde", f"✅  Lista para publicar: {len(tira.publicaciones)} anuncios{extra}")
+            else:
+                n = len(tira.errores)
+                self._chip("rojo", f"❌  {n} problema{'s' if n > 1 else ''}: {tira.errores[0]}")
+        else:
+            self._chip("", "Escoge una tira.")
         t.configure(state="disabled")
         self._actualizar_botones()
+
+    def _chip(self, nivel: str, texto: str) -> None:
+        fondo, color = estilo.AVISOS.get(nivel, (estilo.PANEL_2, estilo.TEXTO_SUAVE))
+        if not nivel:
+            fondo, color = estilo.PANEL_2, estilo.TEXTO_SUAVE
+        self.var_chip.set(texto)
+        self.lbl_chip.configure(background=fondo, foreground=color)
 
     # --- grupos ----------------------------------------------------------------------
     def _actualizar_conteo_grupos(self) -> None:
         gs = cargar_grupos(self.ruta_grupos)
         activos = sum(g.activo for g in gs)
-        self.var_grupos.set(f"({len(gs)} grupos, {activos} activos)" if gs else "(sin grupos todavía)")
+        self.var_grupos.set(f"✅ {activos} activos   ·   🚫 {len(gs) - activos} ignorados" if gs
+                            else "(sin grupos todavía: da clic en «Actualizar grupos»)")
+        self.var_cuenta_grupos.set(f"Cuenta: {self.cuenta}" if self.cuenta else "Cuenta: (sin escoger)")
+        self.var_cabecera.set(f"Cuenta activa: {self.cuenta}" if self.cuenta else "")
 
     def _actualizar_grupos(self) -> None:
         self._marcar_corriendo(True, tira=False)
         self.var_estado.set("Abriendo el navegador…")
         self.trabajador.comandos.put(("grupos", self.cuenta, self.ruta_grupos))
+
+    def _abrir_historial(self) -> None:
+        ruta = self.datos / "historial.csv"
+        if not ruta.exists():
+            messagebox.showinfo(TITULO, "Todavía no hay historial: se crea con la primera publicación.")
+            return
+        self._abrir(ruta)
+
+    def _abrir(self, ruta: Path) -> None:
+        if sys.platform.startswith("win"):
+            os.startfile(str(ruta))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(ruta)])
 
     def _abrir_datos(self) -> None:
         ruta = str(self.datos)
@@ -602,7 +718,8 @@ class App:
                     self.var_estado.set(msg[1])
                 elif tipo == "progreso":
                     _, actual, total, titulo, grupo = msg
-                    self.var_progreso.set(f"Publicación {actual} de {total} — «{titulo}»\nGrupo: {grupo}")
+                    self.var_progreso.set(f"Publicación {actual} de {total}: {titulo}\n👥 {grupo}")
+                    self.barra.configure(maximum=max(1, total), value=actual)
                 elif tipo == "preguntar":
                     _, mensaje, opciones, respuesta = msg
                     self._dialogo(mensaje, opciones, respuesta)
@@ -619,7 +736,8 @@ class App:
                     self._cuenta_bloqueada(*msg[1:])
                 elif tipo == "fin":
                     self.var_estado.set(msg[1])
-                    self.var_progreso.set("")
+                    self.var_progreso.set("Todavía no empieza.")
+                    self.barra.configure(value=0)
                     self._marcar_corriendo(False)
                     self._actualizar_conteo_grupos()
                     if self.tira is not None:
@@ -655,13 +773,15 @@ class App:
                 self._enviar_tira(*args)
                 return
         self.var_estado.set(f"⛔ Se detuvo: «{cuenta}» tuvo un bloqueo.")
-        self.var_progreso.set("")
+        self.var_progreso.set("Todavía no empieza.")
+        self.barra.configure(value=0)
         self._marcar_corriendo(False)
 
     def _dialogo(self, mensaje: str, opciones: list[str], respuesta: queue.Queue) -> None:
         """Muestra un aviso con botones. Cerrar el aviso con la X equivale a la última opción."""
         win = tk.Toplevel(self.root)
         win.title(TITULO)
+        win.configure(background=estilo.FONDO)
         win.transient(self.root)
         win.attributes("-topmost", True)
         # Abajo a la derecha, para no tapar el formulario de Facebook (por ejemplo, el de iniciar sesión).
@@ -684,11 +804,12 @@ class App:
 
         self._responder_pendiente = lambda: responder(DETENER if DETENER in opciones else opciones[-1])
         win.protocol("WM_DELETE_WINDOW", lambda: responder(opciones[-1]))
-        ttk.Label(win, text=mensaje, wraplength=420, padding=16).pack()
-        fila = ttk.Frame(win, padding=(16, 0, 16, 16))
+        ttk.Label(win, text=mensaje, wraplength=440, padding=18).pack()
+        fila = ttk.Frame(win, padding=(18, 0, 18, 18))
         fila.pack()
-        for op in opciones:
-            ttk.Button(fila, text=op, command=lambda o=op: responder(o)).pack(side="left", padx=4)
+        for i, op in enumerate(opciones):
+            estilo_boton = "Rojo.TButton" if op == DETENER else ("Azul.TButton" if i == 0 else "TButton")
+            ttk.Button(fila, text=op, style=estilo_boton, command=lambda o=op: responder(o)).pack(side="left", padx=4)
         win.grab_set()
         self.root.wait_window(win)
         responder(opciones[-1])  # por si la ventana se destruyó de otra forma
@@ -712,6 +833,12 @@ def crear_ventana(datos: Path | None = None) -> tk.Tk:
 
 
 def main() -> None:
+    if sys.platform.startswith("win"):
+        try:  # texto nítido en pantallas con escala (125 %, 150 %…)
+            import ctypes
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            pass
     candado = bloquear_instancia(carpeta_datos())
     if candado is None:
         r = tk.Tk()

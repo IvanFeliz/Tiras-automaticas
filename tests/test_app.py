@@ -225,3 +225,32 @@ def test_seguir_no_ofrece_cuentas_bloqueadas_hoy(ventana_cuentas, monkeypatch):
     app.corriendo = True
     app._cuenta_bloqueada("Gigabyte Centro", "x", ("T", "d", "t"))
     assert "Gigabyte Norte" not in vistas[1] and "Reparaciones Gigabyte" in vistas[1]
+
+
+# --- Diseño nuevo -------------------------------------------------------------------
+def test_tres_pestanas(ventana):
+    root, _ = ventana
+    nb = root.app.pestanas
+    assert [nb.tab(i, "text").split(" ", 1)[1] for i in range(nb.index("end"))] == [
+        "Publicar", "Cuentas y grupos", "Ajustes"]
+
+
+def test_etiqueta_de_estado_de_la_tira(ventana):
+    root, tiras = ventana
+    app = root.app
+    assert "Lista para publicar: 12 anuncios" in app.var_chip.get()
+    (tiras / "2 MARTES" / "TIRA 2" / "5 IMG5.png").unlink()
+    app.cargar_tira(tiras / "2 MARTES" / "TIRA 2")
+    assert app.var_chip.get().startswith("❌")
+
+
+def test_barra_de_progreso(ventana):
+    root, _ = ventana
+    app = root.app
+    app.cola_ui.put(("progreso", 4, 12, "Mantenimiento", "Grupo X"))
+    app._procesar_mensajes()
+    assert float(app.barra["value"]) == 4 and float(app.barra["maximum"]) == 12
+    assert "4 de 12" in app.var_progreso.get()
+    app.cola_ui.put(("fin", "listo"))
+    app._procesar_mensajes()
+    assert float(app.barra["value"]) == 0
