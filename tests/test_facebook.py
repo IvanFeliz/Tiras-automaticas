@@ -187,3 +187,64 @@ def test_reintento_no_duplica_texto(fb, tmp_path):
     url = (DATOS / "grupo_falso.html").as_uri() + "?borrador=1"
     fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
     assert fb.pagina.evaluate("document.querySelector('#ed').innerText") == TEXTO
+
+
+# --- Cuentas, publicar solo y bloqueo ---------------------------------------------------
+from publicador.sesion import CuentaBloqueada, GrupoSinPermiso  # noqa: E402
+
+MENU = (DATOS / "menu_cuentas_falso.html").as_uri()
+
+
+def test_leer_cuentas(fb):
+    fb.url_inicio = MENU
+    assert fb.leer_cuentas() == [("Reparaciones Gigabyte", "perfil"), ("Gigabyte Sucursal Centro", "pagina"),
+                                 ("Gigabyte Sucursal Norte", "pagina")]
+    assert fb.pagina.locator('[role="dialog"]').count() == 0  # cerró el menú
+
+
+def test_cambiar_cuenta(fb):
+    fb.url_inicio = MENU
+    fb.pausa_cambio_s = 0.2
+    fb.cambiar_cuenta("Gigabyte Sucursal Norte")
+    assert fb.cuenta_actual() == "Gigabyte Sucursal Norte"
+    fb.cambiar_cuenta("Gigabyte Sucursal Norte")  # ya está: no hace nada
+
+
+def test_cambiar_a_cuenta_inexistente(fb):
+    fb.url_inicio = MENU
+    fb.pausa_cambio_s = 0.2
+    with pytest.raises(ErrorFacebook, match="No se encontró"):
+        fb.cambiar_cuenta("Otra Página")
+
+
+def test_publicar_solo(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    fb.publicar()
+    assert fb.esperar_resultado(Controles()) == "publicado"
+    assert fb.pagina.evaluate("window.__textoPublicado") == TEXTO
+
+
+def test_grupo_sin_permiso(fb, tmp_path):
+    fb.timeout_compositor_ms = 1500
+    with pytest.raises(GrupoSinPermiso):
+        fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri() + "?sin_permiso=1", TEXTO,
+                                _archivos(tmp_path))
+
+
+def test_bloqueo_al_abrir(fb, tmp_path):
+    with pytest.raises(CuentaBloqueada, match="bloqueado"):
+        fb.preparar_publicacion((DATOS / "bloqueo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+
+
+def test_bloqueo_al_publicar(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?bloqueo_al_publicar=1"
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    fb.publicar()
+    with pytest.raises(CuentaBloqueada, match="restringida"):
+        fb.esperar_resultado(Controles())
+
+
+def test_texto_del_anuncio_no_es_bloqueo(fb, tmp_path):
+    texto = "¿Tu laptop va demasiado rápido? Contenido restringido 😅"
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), texto, _archivos(tmp_path))
+    fb.revisar_bloqueo()  # no debe lanzar: el compositor no es un aviso

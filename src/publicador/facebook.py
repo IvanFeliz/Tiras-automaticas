@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Callable
 
 from .grupos import normalizar_link_grupo  # noqa: F401 (se usa y se reexporta)
-from .sesion import Controles, ErrorFacebook, NavegadorCerrado, SesionCerrada
+from .sesion import (Controles, CuentaBloqueada, ErrorFacebook, GrupoSinPermiso, NavegadorCerrado,
+                     SesionCerrada)
 
 # --- Selectores y textos (ajustar aquí si Facebook cambia) -----------------------------
 URL_TUS_GRUPOS = "https://www.facebook.com/groups/joins/?nav_source=tab"
@@ -29,6 +30,19 @@ TEXTO_AVISO_ERROR = re.compile(r"no se pudo|no se puede publicar|algo sali[oó] 
                                r"se produjo un error|ocurri[oó] un error", re.I)
 ESPERA_AVISO_S = 3.5
 ESPERA_CIERRE_S = 1.5  # el compositor debe seguir cerrado este tiempo para contar como cerrado
+# Menú de cuenta (foto de arriba a la derecha) y perfiles.
+URL_INICIO = "https://www.facebook.com/"
+SEL_MENU_CUENTA = ('[aria-label="Tu perfil"], [aria-label="Your profile"], '
+                   '[aria-label="Cuenta"], [aria-label="Account"]')
+TEXTO_VER_PERFILES = re.compile(r"Ver todos los perfiles|See all profiles", re.I)
+SEL_PERFIL = '[role="radio"], [role="menuitemradio"]'
+SEL_PUBLICAR_ACTIVO = '[aria-label="Publicar"]:not([aria-disabled="true"])'
+ESPERA_BOTON_PUBLICAR_MS = 120_000
+# Señales de bloqueo o verificación.
+TEXTO_BLOQUEO = re.compile(r"bloquead[oa]s? temporalmente|est[aá]s bloquead|restringid|confirma tu identidad|"
+                           r"revisi[oó]n de seguridad|actividad sospechosa|limitamos|demasiado r[aá]pido|"
+                           r"temporarily blocked|you.re blocked|restricted|confirm your identity", re.I)
+SEL_AVISOS_BLOQUEO = '[role="dialog"], [role="alertdialog"], [role="alert"]'
 
 _JS_ESCUCHAR_PUBLICAR = """
 (texto) => {
@@ -87,6 +101,8 @@ class Facebook:
         self.timeout_compositor_ms = 30_000
         self.timeout_subida_s = 60
         self.pausa_scroll_s = 2.0
+        self.url_inicio = URL_INICIO
+        self.pausa_cambio_s = 4.0
         self._pw = None
         self._ctx = None
         self.pagina = None
@@ -202,6 +218,7 @@ class Facebook:
             self.pagina.goto(link)
             if not self.sesion_activa():
                 raise SesionCerrada()
+            self.revisar_bloqueo()
             self._abrir_compositor()
             self.pagina.evaluate(_JS_ESCUCHAR_PUBLICAR, TEXTO_PUBLICAR)
             self._pegar_texto(texto)
@@ -220,8 +237,8 @@ class Facebook:
         except Exception:
             boton = p.get_by_text(TEXTO_ABRIR_COMPOSITOR)
             if boton.count() == 0:
-                raise ErrorFacebook("No se encontró el cuadro «Escribe algo…». "
-                                    "Puede que el grupo no permita publicar.")
+                self.revisar_bloqueo()
+                raise GrupoSinPermiso("no aparece el cuadro «Escribe algo…»")
         boton.first.click()
         dialogo = p.locator(SEL_DIALOGO).filter(has=p.locator(SEL_EDITOR)).last
         try:
@@ -331,6 +348,7 @@ class Facebook:
             if not self._dialogo_abierto() and self._sigue_cerrado():
                 if self.cerrado:
                     raise NavegadorCerrado()
+                self.revisar_bloqueo()
                 try:
                     publicado = bool(self.pagina.evaluate("window.__pubClick === true"))
                 except Exception:
@@ -377,3 +395,117 @@ class Facebook:
                 pass
         except Exception:
             pass
+
+    # --- bloqueo -----------------------------------------------------------------------
+    def revisar_bloqueo(self) -> None:
+        """Lanza CuentaBloqueada si Facebook muestra una señal de bloqueo o verificación."""
+        url = self.pagina.url or ""
+        if "/checkpoint" in url:
+            raise CuentaBloqueada("Facebook pidió una verificación de seguridad.")
+        try:
+            avisos = self.pagina.locator(SEL_AVISOS_BLOQUEO)
+            for i in range(avisos.count()):
+                a = avisos.nth(i)
+                if not a.is_visible() or a.locator(SEL_EDITOR).count() > 0:
+                    continue  # la ventana donde se escribe el anuncio no es un aviso
+                texto = " ".join((a.inner_text() or "").split())
+                if TEXTO_BLOQUEO.search(texto):
+                    raise CuentaBloqueada(texto[:200])
+        except CuentaBloqueada:
+            raise
+        except Exception:
+            if self.cerrado:
+                raise NavegadorCerrado()
+
+    # --- publicar solo -----------------------------------------------------------------
+    def publicar(self) -> None:
+        """Da clic en «Publicar» cuando esté activo (espera a que terminen de subir los archivos)."""
+        boton = self._dialogo.locator(SEL_PUBLICAR_ACTIVO).last
+        try:
+            boton.wait_for(state="visible", timeout=ESPERA_BOTON_PUBLICAR_MS)
+        except Exception as e:
+            if self.cerrado:
+                raise NavegadorCerrado() from e
+            self.revisar_bloqueo()
+            raise ErrorFacebook("El botón «Publicar» no se activó.") from e
+        boton.click()
+
+    # --- cuentas -----------------------------------------------------------------------
+    def _abrir_lista_perfiles(self):
+        """Abre el menú de cuenta y la lista de perfiles. Devuelve el localizador de perfiles."""
+        p = self.pagina
+        menu = p.locator(SEL_MENU_CUENTA).first
+        try:
+            menu.wait_for(state="visible", timeout=self.timeout_compositor_ms)
+        except Exception as e:
+            raise ErrorFacebook("No se encontró el menú de cuenta (tu foto, arriba a la derecha).") from e
+        menu.click()
+        perfiles = p.locator(SEL_PERFIL)
+        ver = p.get_by_text(TEXTO_VER_PERFILES)
+        try:
+            ver.first.wait_for(state="visible", timeout=5_000)
+            ver.first.click()
+        except Exception:
+            pass  # algunas versiones muestran los perfiles directo
+        try:
+            perfiles.first.wait_for(state="visible", timeout=10_000)
+        except Exception as e:
+            self.pagina.keyboard.press("Escape")
+            raise ErrorFacebook("No se encontró la lista de perfiles en el menú de cuenta.") from e
+        return perfiles
+
+    @staticmethod
+    def _nombre_perfil(elemento) -> str:
+        nombre = (elemento.get_attribute("aria-label") or elemento.inner_text() or "").strip()
+        return nombre.splitlines()[0].strip() if nombre else ""
+
+    def _ir_a_inicio(self) -> None:
+        if not (self.pagina.url or "").startswith(self.url_inicio.split("?")[0]):
+            self.pagina.goto(self.url_inicio)
+        if not self.sesion_activa():
+            raise SesionCerrada()
+
+    def leer_cuentas(self) -> list[tuple[str, str]]:
+        """Perfiles disponibles: el primero es el perfil personal; los demás, Páginas."""
+        self._ir_a_inicio()
+        perfiles = self._abrir_lista_perfiles()
+        nombres: list[str] = []
+        for i in range(perfiles.count()):
+            n = self._nombre_perfil(perfiles.nth(i))
+            if n and n not in nombres:
+                nombres.append(n)
+        self.pagina.keyboard.press("Escape")
+        return [(n, "perfil" if i == 0 else "pagina") for i, n in enumerate(nombres)]
+
+    def cuenta_actual(self) -> str | None:
+        self._ir_a_inicio()
+        perfiles = self._abrir_lista_perfiles()
+        actual = None
+        for i in range(perfiles.count()):
+            el = perfiles.nth(i)
+            if el.get_attribute("aria-checked") == "true":
+                actual = self._nombre_perfil(el)
+                break
+        self.pagina.keyboard.press("Escape")
+        return actual
+
+    def cambiar_cuenta(self, nombre: str) -> None:
+        if self.cuenta_actual() == nombre:
+            return
+        perfiles = self._abrir_lista_perfiles()
+        for i in range(perfiles.count()):
+            el = perfiles.nth(i)
+            if self._nombre_perfil(el) == nombre:
+                el.click()
+                break
+        else:
+            self.pagina.keyboard.press("Escape")
+            raise ErrorFacebook(f"No se encontró la cuenta «{nombre}» en el menú de perfiles. "
+                                "Da clic en «Actualizar cuentas».")
+        try:
+            self.pagina.wait_for_load_state("load", timeout=30_000)
+        except Exception:
+            pass
+        time.sleep(self.pausa_cambio_s)
+        if self.cuenta_actual() != nombre:
+            raise ErrorFacebook(f"No se pudo cambiar a la cuenta «{nombre}».")

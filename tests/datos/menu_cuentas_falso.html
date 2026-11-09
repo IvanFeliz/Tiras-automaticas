@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><title>Inicio falso</title>
+<body>
+<!-- Imita el menú de cuenta de Facebook: foto arriba a la derecha → «Ver todos los perfiles» → lista. -->
+<div role="button" aria-label="Tu perfil" tabindex="0" id="foto">foto</div>
+<script>
+const PERFILES = ['Reparaciones Gigabyte', 'Gigabyte Sucursal Centro', 'Gigabyte Sucursal Norte'];
+const actual = new URLSearchParams(location.search).get('cuenta') || PERFILES[0];
+document.getElementById('foto').addEventListener('click', () => {
+  const d = document.createElement('div');
+  d.setAttribute('role', 'dialog');
+  d.innerHTML = '<div role="button" tabindex="0" id="ver">Ver todos los perfiles</div>' +
+                '<div role="button" tabindex="0">Configuración y privacidad</div>';
+  document.body.appendChild(d);
+  d.querySelector('#ver').addEventListener('click', () => {
+    d.innerHTML = '';
+    for (const p of PERFILES) {
+      const r = document.createElement('div');
+      r.setAttribute('role', 'radio');
+      r.setAttribute('aria-checked', p === actual ? 'true' : 'false');
+      r.tabIndex = 0;
+      r.innerHTML = `<span>${p}</span>`;
+      r.addEventListener('click', () => {
+        location.search = '?cuenta=' + encodeURIComponent(p);  // Facebook recarga al cambiar
+      });
+      d.appendChild(r);
+    }
+  });
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') document.querySelectorAll('[role=dialog]').forEach(x => x.remove());
+});
+</script>
+</body></html>
