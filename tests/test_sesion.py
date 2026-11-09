@@ -1,0 +1,192 @@
+import random
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import pytest
+
+from publicador.grupos import cargar_grupos
+from publicador.historial import Historial, Registro
+from publicador.sesion import Controles, ErrorFacebook, ejecutar_tira
+from publicador.tira import Publicacion, Tira
+
+HOY = datetime(2026, 11, 9, 10, 0)
+
+
+class Reloj:
+    def __init__(self):
+        self.t = HOY
+
+    def __call__(self):
+        self.t += timedelta(seconds=30)
+        return self.t
+
+
+class FakeFB:
+    def __init__(self, resultados=(), errores=0, sesion=(True,)):
+        self.resultados = list(resultados)
+        self.errores = errores
+        self.sesion = list(sesion)
+        self.preparadas: list[tuple[str, str, list[Path]]] = []
+        self.cerrados = 0
+        self.capturas = 0
+
+    def sesion_activa(self):
+        return self.sesion.pop(0) if len(self.sesion) > 1 else self.sesion[0]
+
+    def preparar_publicacion(self, link, texto, archivos):
+        self.preparadas.append((link, texto, archivos))
+        if self.errores:
+            self.errores -= 1
+            raise ErrorFacebook("no abrió")
+
+    def esperar_resultado(self, controles):
+        return self.resultados.pop(0) if self.resultados else "publicado"
+
+    def cerrar_compositor(self):
+        self.cerrados += 1
+
+    def captura(self, nombre):
+        self.capturas += 1
+        return Path("c.png")
+
+
+class FakeUI:
+    def __init__(self, respuestas=()):
+        self.respuestas = list(respuestas)
+        self.estados: list[str] = []
+        self.preguntas: list[str] = []
+
+    def estado(self, m):
+        self.estados.append(m)
+
+    def progreso(self, actual, total, titulo, grupo):
+        pass
+
+    def preguntar(self, mensaje, opciones):
+        self.preguntas.append(mensaje)
+        return self.respuestas.pop(0) if self.respuestas else opciones[0]
+
+
+@pytest.fixture
+def entorno(tmp_path):
+    def armar(n_pubs=3, n_grupos=5):
+        pubs = [Publicacion(i, f"T{i}", f"Texto {i}", tmp_path / f"{i} I.png") for i in range(1, n_pubs + 1)]
+        tira = Tira(tmp_path, pubs, [tmp_path / "0.A.jpg", tmp_path / "0.B.mp4"], [])
+        rg = tmp_path / "grupos.txt"
+        rg.write_text("".join(f"G{i} | https://fb/groups/{i}/\n" for i in range(1, n_grupos + 1)), encoding="utf-8")
+        return tira, rg, Historial(tmp_path / "h.csv")
+    return armar
+
+
+def _correr(tira, rg, h, fb, ui, controles=None):
+    return ejecutar_tira(tira, "1.lunes", "TIRA 1", fb, ui, controles or Controles(), rg, h, 60,
+                         ahora=Reloj(), rng=random.Random(0))
+
+
+def _resultados(h):
+    return [(f["numero"], f["link_grupo"], f["resultado"]) for f in h._filas()]
+
+
+def test_todo_publicado(entorno):
+    tira, rg, h = entorno()
+    fb, ui = FakeFB(), FakeUI()
+    r = _correr(tira, rg, h, fb, ui)
+    assert (r.publicadas, r.saltadas, r.motivo_fin) == (3, 0, "terminada")
+    links = [p[0] for p in fb.preparadas]
+    assert len(set(links)) == 3
+    assert [x[2] for x in _resultados(h)] == ["publicado"] * 3
+    texto, archivos = fb.preparadas[0][1], fb.preparadas[0][2]
+    assert texto == "Texto 1"
+    assert archivos[0].name == "1 I.png" and archivos[1] in tira.ubicaciones
+    assert any("TIRA 1 terminada ✅ (3 publicadas)" in e for e in ui.estados)
+
+
+def test_saltar_marca_y_reintenta(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb = FakeFB(["saltar", "publicado"])
+    r = _correr(tira, rg, h, fb, FakeUI())
+    primero, segundo = fb.preparadas[0][0], fb.preparadas[1][0]
+    assert primero != segundo
+    assert fb.cerrados == 1
+    assert {g.link: g.activo for g in cargar_grupos(rg)}[primero] is False
+    assert (r.publicadas, r.saltadas) == (1, 1)
+    assert _resultados(h)[0] == ("1", primero, "saltado")
+
+
+def test_cerrado_no_marca(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb = FakeFB(["cerrado", "publicado"])
+    _correr(tira, rg, h, fb, FakeUI())
+    primero = fb.preparadas[0][0]
+    assert {g.link: g.activo for g in cargar_grupos(rg)}[primero] is True
+    assert _resultados(h)[0][2] == "saltado"
+    assert fb.preparadas[1][0] != primero
+
+
+def test_error_reintentar(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb, ui = FakeFB(errores=1), FakeUI(["Reintentar"])
+    r = _correr(tira, rg, h, fb, ui)
+    assert fb.preparadas[0][0] == fb.preparadas[1][0]
+    assert fb.capturas == 1
+    assert [x[2] for x in _resultados(h)] == ["error", "publicado"]
+    assert r.publicadas == 1
+
+
+def test_error_saltar_grupo(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb, ui = FakeFB(errores=1), FakeUI(["Saltar este grupo"])
+    _correr(tira, rg, h, fb, ui)
+    primero = fb.preparadas[0][0]
+    assert fb.preparadas[1][0] != primero
+    assert {g.link: g.activo for g in cargar_grupos(rg)}[primero] is False
+
+
+def test_error_detener(entorno):
+    tira, rg, h = entorno(n_pubs=2)
+    fb, ui = FakeFB(errores=1), FakeUI(["Detener"])
+    r = _correr(tira, rg, h, fb, ui)
+    assert (r.publicadas, r.motivo_fin) == (0, "detenida")
+    assert len(fb.preparadas) == 1
+
+
+def test_detener(entorno):
+    tira, rg, h = entorno()
+    fb = FakeFB(["publicado", "detener"])
+    r = _correr(tira, rg, h, fb, FakeUI())
+    assert (r.publicadas, r.saltadas, r.motivo_fin) == (1, 0, "detenida")
+    assert fb.cerrados == 1
+
+
+def test_detener_antes_de_empezar(entorno):
+    tira, rg, h = entorno()
+    c = Controles()
+    c.detener.set()
+    fb = FakeFB()
+    r = _correr(tira, rg, h, fb, FakeUI(), c)
+    assert r.motivo_fin == "detenida" and fb.preparadas == []
+
+
+def test_reanudar(entorno):
+    tira, rg, h = entorno()
+    h.agregar(Registro(HOY - timedelta(hours=2), "1.lunes", "TIRA 1", 1, "T1", "G1", "https://fb/groups/1/", "a", "publicado"))
+    fb = FakeFB()
+    r = _correr(tira, rg, h, fb, FakeUI())
+    assert [p[1] for p in fb.preparadas] == ["Texto 2", "Texto 3"]
+    assert "https://fb/groups/1/" not in [p[0] for p in fb.preparadas]
+    assert r.publicadas == 2
+
+
+def test_sin_grupos(entorno):
+    tira, rg, h = entorno(n_pubs=2, n_grupos=1)
+    ui = FakeUI()
+    r = _correr(tira, rg, h, FakeFB(), ui)
+    assert (r.publicadas, r.saltadas, r.motivo_fin) == (1, 0, "sin_grupos")
+    assert any("No hay grupos disponibles" in e for e in ui.estados)
+
+
+def test_pide_login(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    ui = FakeUI()
+    _correr(tira, rg, h, FakeFB(sesion=(False, True)), ui)
+    assert any("Inicia sesión" in p for p in ui.preguntas)
