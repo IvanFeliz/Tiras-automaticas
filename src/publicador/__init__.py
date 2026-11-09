@@ -1,0 +1,1 @@
+"""Publicador de Tiras."""
