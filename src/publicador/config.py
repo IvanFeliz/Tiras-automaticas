@@ -20,6 +20,18 @@ class Config:
     minutos_entre_publicaciones: int = 60
     ultimo_dia: str = ""
     ultima_tira: str = ""
+    modo: str = "revision"  # revision | automatico
+    espera_min: int = 5
+    espera_max: int = 10
+    ultima_cuenta: str = ""
+
+
+ESPERA_MINIMA = 2  # minutos; no se puede bajar
+
+
+def ajustar_espera(cfg: Config) -> None:
+    cfg.espera_min = max(ESPERA_MINIMA, int(cfg.espera_min))
+    cfg.espera_max = max(cfg.espera_min, int(cfg.espera_max))
 
 
 def cargar_config(ruta: Path) -> Config:

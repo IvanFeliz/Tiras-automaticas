@@ -28,3 +28,14 @@ def test_una_sola_instancia(tmp_path):
     otra = bloquear_instancia(tmp_path)
     assert otra is not None
     otra.close()
+
+
+def test_ajustar_espera():
+    from publicador.config import ajustar_espera
+    c = Config(espera_min=1, espera_max=0)
+    ajustar_espera(c)
+    assert (c.espera_min, c.espera_max) == (2, 2)
+    c = Config(espera_min=7, espera_max=4)
+    ajustar_espera(c)
+    assert (c.espera_min, c.espera_max) == (7, 7)
+    assert Config().modo == "revision"
