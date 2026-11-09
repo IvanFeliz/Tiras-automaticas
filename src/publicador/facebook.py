@@ -300,8 +300,14 @@ class Facebook:
         return textos
 
     def _dialogo_abierto(self) -> bool:
+        if self._dialogo is None:
+            return False
         try:
-            return self._dialogo is not None and self._dialogo.count() > 0 and self._dialogo.is_visible()
+            if self._dialogo.count() > 0 and self._dialogo.is_visible():
+                return True
+            # Por si Facebook redibujó la ventana y se perdió la marca: cualquier compositor visible.
+            otro = self.pagina.locator(SEL_DIALOGO).filter(has=self.pagina.locator(SEL_EDITOR))
+            return any(otro.nth(i).is_visible() for i in range(otro.count()))
         except Exception:
             return False
 
