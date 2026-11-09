@@ -9,9 +9,9 @@ from .historial import Historial
 
 
 def elegir_grupo(grupos: list[Grupo], historial: Historial, ahora: datetime, minutos: int,
-                 excluir: set[str], rng: random.Random) -> Grupo | None:
+                 excluir: set[str], rng: random.Random, cuenta: str | None = None) -> Grupo | None:
     limite = ahora - timedelta(minutes=minutos)
-    ultimas = historial.ultimas_publicaciones()
+    ultimas = historial.ultimas_publicaciones(cuenta)
     candidatos: list[tuple[datetime | None, Grupo]] = []
     for g in grupos:
         if not g.activo or g.link in excluir:
