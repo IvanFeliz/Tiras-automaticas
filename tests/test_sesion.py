@@ -266,3 +266,15 @@ def test_fallo_pero_si_se_publico(entorno):
     assert [p[1] for p in fb.preparadas] == ["Texto 1", "Texto 2"]
     assert [x[2] for x in _resultados(h)] == ["error", "publicado", "publicado"]
     assert r.publicadas == 2
+
+
+def test_no_poder_marcar_grupo_no_detiene(entorno, monkeypatch):
+    tira, rg, h = entorno(n_pubs=1)
+
+    def falla(*a, **k):
+        raise PermissionError("grupos.txt bloqueado")
+    monkeypatch.setattr("publicador.sesion.marcar_ignorado", falla)
+    ui = FakeUI()
+    r = _correr(tira, rg, h, FakeFB(["saltar", "publicado"]), ui)
+    assert r.publicadas == 1
+    assert any("grupos.txt" in e for e in ui.estados)

@@ -26,10 +26,13 @@ jobs:
       - name: Pruebas
         run: pytest -v
 
-      - name: Generar PublicadorTiras.exe
-        run: pyinstaller --onefile --windowed --name PublicadorTiras --paths src src/publicador/__main__.py
+      # Carpeta (onedir) en vez de un solo .exe: abre más rápido y el antivirus la bloquea menos.
+      - name: Generar PublicadorTiras
+        run: |
+          pyinstaller --onedir --windowed --name PublicadorTiras --paths src src/publicador/__main__.py
+          Copy-Item LEEME.md dist/PublicadorTiras/LEEME.md
 
       - uses: actions/upload-artifact@v5
         with:
           name: PublicadorTiras
-          path: dist/PublicadorTiras.exe
+          path: dist/PublicadorTiras/

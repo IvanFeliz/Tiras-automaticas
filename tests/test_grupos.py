@@ -79,3 +79,20 @@ def test_links_escritos_a_mano_se_reconocen(tmp_path):
     assert {g.link: g.activo for g in gs} == {L1: True, L2: False}
     marcar_ignorado(r, L1)
     assert all(not g.activo for g in cargar_grupos(r))
+
+
+def test_escaneo_parcial_no_desactiva(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_text("".join(f"G{i} | https://www.facebook.com/groups/{i}/\n" for i in range(1, 21)), encoding="utf-8")
+    actualizar_grupos(r, [("G1", L1), ("Nuevo", "https://www.facebook.com/groups/99/")])
+    gs = cargar_grupos(r)
+    assert len(gs) == 21
+    assert all(g.activo for g in gs)
+
+
+def test_escritura_con_respaldo(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_text(f"A | {L1}\n", encoding="utf-8")
+    marcar_ignorado(r, L1)
+    assert (tmp_path / "grupos.txt.bak").read_text(encoding="utf-8") == f"A | {L1}\n"
+    assert not list(tmp_path.glob("*.tmp"))

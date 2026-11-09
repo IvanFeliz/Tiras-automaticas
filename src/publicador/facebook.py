@@ -25,8 +25,10 @@ SEL_LOGIN = 'input[name="email"], input[name="pass"]'
 TEXTO_PUBLICAR = "Publicar"
 TEXTO_DESCARTAR = re.compile(r"^\s*Descartar\s*$", re.I)
 SEL_AVISO = '[role="alert"], [role="alertdialog"]'
-TEXTO_AVISO_ERROR = re.compile(r"no se pudo|no se puede|algo sali[oó] mal|intenta(lo)? de nuevo|error", re.I)
-ESPERA_AVISO_S = 2.5
+TEXTO_AVISO_ERROR = re.compile(r"no se pudo|no se puede publicar|algo sali[oó] mal|intenta(lo)? de nuevo|"
+                               r"se produjo un error|ocurri[oó] un error", re.I)
+ESPERA_AVISO_S = 3.5
+ESPERA_CIERRE_S = 1.5  # el compositor debe seguir cerrado este tiempo para contar como cerrado
 
 _JS_ESCUCHAR_PUBLICAR = """
 (texto) => {
@@ -84,11 +86,12 @@ class Facebook:
         self.url_tus_grupos = URL_TUS_GRUPOS
         self.timeout_compositor_ms = 30_000
         self.timeout_subida_s = 60
-        self.pausa_scroll_s = 1.5
+        self.pausa_scroll_s = 2.0
         self._pw = None
         self._ctx = None
         self.pagina = None
         self._dialogo = None
+        self._avisos_previos: set[str] = set()
 
     # --- ciclo de vida ---------------------------------------------------------------
     @property
@@ -119,8 +122,13 @@ class Facebook:
                     opciones["channel"] = canal
                 self._ctx = self._pw.chromium.launch_persistent_context(str(self.perfil_dir), **opciones)
                 break
-            except Exception as e:  # el canal no está instalado
+            except Exception as e:
                 ultimo_error = e
+                texto = str(e).lower()
+                # Solo se prueba otro navegador si este no está instalado; si no, se podría perder la sesión.
+                if not any(k in texto for k in ("is not found", "doesn't exist", "does not exist", "not installed",
+                                                "no such file", "executable")):
+                    break
         if self._ctx is None:
             self._pw.stop()
             self._pw = None
@@ -172,12 +180,14 @@ class Facebook:
             ui_estado(f"{len(nombres)} grupos encontrados…")
             if len(nombres) == anterior:
                 estables += 1
-                if estables >= 3:
+                if estables >= 5:
                     break
             else:
                 estables = 0
                 anterior = len(nombres)
             self.pagina.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            ancho, alto = self.pagina.evaluate("[window.innerWidth, window.innerHeight]")
+            self.pagina.mouse.move(ancho / 2, alto / 2)  # la rueda se aplica donde está el mouse
             self.pagina.mouse.wheel(0, 4000)
             time.sleep(self.pausa_scroll_s)
         return [(nombre or link, link) for link, nombre in nombres.items()]
@@ -196,6 +206,7 @@ class Facebook:
             self.pagina.evaluate(_JS_ESCUCHAR_PUBLICAR, TEXTO_PUBLICAR)
             self._pegar_texto(texto)
             self._adjuntar(archivos)
+            self._avisos_previos = set(self._textos_de_avisos())
         except ErrorPW as e:
             if self.cerrado or "closed" in str(e).lower():
                 raise NavegadorCerrado() from e
@@ -212,15 +223,23 @@ class Facebook:
                 raise ErrorFacebook("No se encontró el cuadro «Escribe algo…». "
                                     "Puede que el grupo no permita publicar.")
         boton.first.click()
-        self._dialogo = p.locator(SEL_DIALOGO).filter(has=p.locator(SEL_EDITOR)).last
+        dialogo = p.locator(SEL_DIALOGO).filter(has=p.locator(SEL_EDITOR)).last
         try:
-            self._dialogo.wait_for(state="visible", timeout=self.timeout_compositor_ms)
+            dialogo.wait_for(state="visible", timeout=self.timeout_compositor_ms)
         except Exception as e:
             raise ErrorFacebook("No se abrió la ventana para crear la publicación.") from e
+        # Se marca la ventana: así se sigue reconociendo aunque Facebook cambie de vista adentro
+        # (editar foto, agregar a tu publicación…) y el editor desaparezca un momento.
+        marca = str(time.monotonic_ns())
+        dialogo.evaluate("(el, m) => el.setAttribute('data-publicador', m)", marca)
+        self._dialogo = p.locator(f'[data-publicador="{marca}"]')
 
     def _pegar_texto(self, texto: str) -> None:
         editor = self._dialogo.locator(SEL_EDITOR).first
         editor.click()
+        # Facebook puede recordar un borrador: se limpia antes de pegar.
+        self.pagina.keyboard.press("Control+A")
+        self.pagina.keyboard.press("Delete")
         editor.evaluate(_JS_PEGAR, texto)
         muestra = _solo_letras(texto)[:30]
         if not muestra:
@@ -237,24 +256,48 @@ class Facebook:
         self.pagina.keyboard.insert_text(texto)
 
     def _adjuntar(self, archivos: list[Path]) -> None:
+        rutas = [str(a) for a in archivos]
         entrada = self._dialogo.locator(SEL_INPUT_ARCHIVOS)
-        if entrada.count() == 0:
+        if entrada.count() > 0:
+            entrada.first.set_input_files(rutas)
+        else:
             foto = self._dialogo.locator(SEL_BOTON_FOTO)
             if foto.count() == 0:
                 raise ErrorFacebook("No se encontró el botón para agregar fotos o videos.")
-            foto.first.click()
-            entrada = self._dialogo.locator(SEL_INPUT_ARCHIVOS)
             try:
-                entrada.first.wait_for(state="attached", timeout=10_000)
-            except Exception as e:
-                raise ErrorFacebook("No se encontró dónde subir los archivos.") from e
-        entrada.first.set_input_files([str(a) for a in archivos])
+                # Si el botón abre la ventana «Abrir» de Windows, se contesta sin que aparezca.
+                with self.pagina.expect_file_chooser(timeout=5_000) as selector:
+                    foto.first.click()
+                selector.value.set_files(rutas)
+            except Exception:
+                entrada = self._dialogo.locator(SEL_INPUT_ARCHIVOS)
+                try:
+                    entrada.first.wait_for(state="attached", timeout=10_000)
+                except Exception as e:
+                    raise ErrorFacebook("No se encontró dónde subir los archivos.") from e
+                entrada.first.set_input_files(rutas)
+        # Se espera a que terminen de subir (sobre todo el video). Si tarda más, se deja así:
+        # Facebook no deja dar clic en Publicar hasta que termine.
         time.sleep(1)
         limite = time.monotonic() + self.timeout_subida_s
-        while self._dialogo.locator(SEL_PROGRESO).count() > 0:
-            if time.monotonic() > limite:
-                raise ErrorFacebook("Los archivos tardaron demasiado en subir.")
+        while self._barras_visibles() > 0 and time.monotonic() < limite:
             time.sleep(0.5)
+
+    def _barras_visibles(self) -> int:
+        try:
+            barras = self._dialogo.locator(SEL_PROGRESO)
+            return sum(1 for i in range(barras.count()) if barras.nth(i).is_visible())
+        except Exception:
+            return 0
+
+    def _textos_de_avisos(self) -> list[str]:
+        textos = []
+        avisos = self.pagina.locator(SEL_AVISO)
+        for i in range(avisos.count()):
+            a = avisos.nth(i)
+            if a.is_visible():
+                textos.append((a.inner_text() or "").strip())
+        return textos
 
     def _dialogo_abierto(self) -> bool:
         try:
@@ -262,12 +305,24 @@ class Facebook:
         except Exception:
             return False
 
+    def _sigue_cerrado(self) -> bool:
+        """Confirma que el compositor sigue cerrado un momento (no fue solo un cambio de vista)."""
+        limite = time.monotonic() + ESPERA_CIERRE_S
+        while time.monotonic() < limite:
+            if self._dialogo_abierto():
+                return False
+            try:
+                self.pagina.wait_for_timeout(250)
+            except Exception as e:
+                raise NavegadorCerrado() from e
+        return True
+
     def esperar_resultado(self, controles: Controles) -> str:
         while True:
             if self.cerrado:
                 raise NavegadorCerrado()
             # Primero se revisa si ya se publicó: gana a un «Saltar» apretado justo después.
-            if not self._dialogo_abierto():
+            if not self._dialogo_abierto() and self._sigue_cerrado():
                 if self.cerrado:
                     raise NavegadorCerrado()
                 try:
@@ -293,10 +348,8 @@ class Facebook:
         limite = time.monotonic() + ESPERA_AVISO_S
         while time.monotonic() < limite:
             try:
-                avisos = self.pagina.locator(SEL_AVISO)
-                for i in range(avisos.count()):
-                    a = avisos.nth(i)
-                    if a.is_visible() and TEXTO_AVISO_ERROR.search(a.inner_text() or ""):
+                for texto in self._textos_de_avisos():
+                    if texto not in self._avisos_previos and TEXTO_AVISO_ERROR.search(texto):
                         return True
                 self.pagina.wait_for_timeout(250)
             except Exception:

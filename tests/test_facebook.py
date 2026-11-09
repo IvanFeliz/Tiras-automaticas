@@ -149,3 +149,41 @@ def test_error_de_facebook_despues_de_publicar(fb, tmp_path):
     fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
     fb.pagina.locator("#publicar").click()
     assert fb.esperar_resultado(Controles()) == "fallo"
+
+
+def test_subida_lenta_no_es_error(fb, tmp_path):
+    """Si los archivos tardan, se deja listo igual: Facebook no deja publicar hasta que terminen."""
+    url = (DATOS / "grupo_falso.html").as_uri() + "?subida_lenta=1"
+    fb.timeout_subida_s = 1
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))  # no debe lanzar
+
+
+def test_barra_oculta_no_cuenta(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?barra_oculta=1"
+    fb.timeout_subida_s = 30
+    import time as _t
+    t0 = _t.monotonic()
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    assert _t.monotonic() - t0 < 15
+
+
+def test_cambio_de_vista_no_cuenta_como_cerrado(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    fb.pagina.locator("#editar-foto").click()  # el editor desaparece un momento
+    c = Controles()
+    import threading as _th
+    _th.Timer(2.5, c.saltar.set).start()
+    assert fb.esperar_resultado(c) == "saltar"
+
+
+def test_aviso_previo_no_es_error(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?aviso_previo=1"
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    fb.pagina.locator("#publicar").click()
+    assert fb.esperar_resultado(Controles()) == "publicado"
+
+
+def test_reintento_no_duplica_texto(fb, tmp_path):
+    url = (DATOS / "grupo_falso.html").as_uri() + "?borrador=1"
+    fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
+    assert fb.pagina.evaluate("document.querySelector('#ed').innerText") == TEXTO

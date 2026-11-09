@@ -79,6 +79,13 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 if resp != REINTENTAR:
                     return
 
+    def ignorar(grupo: Grupo) -> None:
+        try:
+            marcar_ignorado(ruta_grupos, grupo.link)
+        except OSError:
+            ui.estado(f"No se pudo marcar «{grupo.nombre}» en grupos.txt (¿está abierto en otro programa?). "
+                      "Se sigue con otro grupo.")
+
     def fin(motivo: str) -> Resultado:
         return Resultado(publicadas, saltadas, motivo)
 
@@ -118,7 +125,7 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 fb.cerrar_compositor()
                 if resp == DETENER:
                     return fin("detenida")
-                marcar_ignorado(ruta_grupos, grupo.link)
+                ignorar(grupo)
                 saltadas += 1
                 grupo = None
                 continue
@@ -152,7 +159,7 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
             saltadas += 1
             if res == "saltar":
                 fb.cerrar_compositor()
-                marcar_ignorado(ruta_grupos, grupo.link)
+                ignorar(grupo)
             grupo = None
 
     ui.estado(f"{nombre_tira} terminada ✅ ({publicadas} publicadas)")

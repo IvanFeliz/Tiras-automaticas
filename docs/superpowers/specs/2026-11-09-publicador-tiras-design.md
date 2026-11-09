@@ -177,7 +177,7 @@ Al terminar: *"TIRA 3 terminada ✅ (12 publicadas)"*.
 ## 10. Entrega
 
 - Repositorio en GitHub con el código, las pruebas y esta especificación.
-- Un flujo de GitHub Actions en `windows-latest` que corre las pruebas y genera `PublicadorTiras.exe`
+- Un flujo de GitHub Actions en `windows-latest` que corre las pruebas y genera la carpeta `PublicadorTiras` (con `PublicadorTiras.exe`)
   (PyInstaller) como archivo descargable. El programa usa el Chrome o Edge instalado en Windows
   (Edge viene de fábrica), así que el `.exe` no incluye navegador.
 - Un `LEEME.md` corto para el usuario: cómo abrirlo, iniciar sesión la primera vez y publicar una tira.

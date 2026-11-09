@@ -8,7 +8,7 @@ import sys
 import threading
 import traceback
 import tkinter as tk
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -19,6 +19,15 @@ from .sesion import DETENER, Controles, ErrorFacebook, NavegadorCerrado, ejecuta
 from .tira import Tira, leer_tira, listar_subcarpetas
 
 TITULO = "Publicador de Tiras"
+
+
+def escribir_log(datos: Path, texto: str) -> None:
+    """Anota un error técnico en errores.log; si no se puede, no pasa nada."""
+    try:
+        with (Path(datos) / "errores.log").open("a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}\n{texto}\n")
+    except OSError:
+        pass
 
 
 class UITk:
@@ -80,8 +89,7 @@ class Trabajador(threading.Thread):
             except ErrorFacebook as e:
                 self.cola_ui.put(("fin", f"⚠️ {e}"))
             except Exception as e:
-                with (self.datos / "errores.log").open("a", encoding="utf-8") as f:
-                    f.write(traceback.format_exc() + "\n")
+                escribir_log(self.datos, traceback.format_exc())
                 if self.fb is not None and self.fb.cerrado:
                     self._olvidar_navegador()
                 self.cola_ui.put(("fin", f"⚠️ Error inesperado: {e} (detalle en errores.log)"))
@@ -151,6 +159,7 @@ class App:
         self._cargar_dias()
         self._actualizar_conteo_grupos()
         self.root.protocol("WM_DELETE_WINDOW", self._al_cerrar)
+        self.root.report_callback_exception = self._error_en_ventana
         self.root.after(100, self._procesar_cola)
 
     # --- construcción ----------------------------------------------------------------
@@ -357,7 +366,26 @@ class App:
         self.btn_empezar.configure(state="normal" if ok else "disabled")
 
     # --- cola de mensajes del hilo de trabajo ------------------------------------------
+    def _error_en_ventana(self, exc_tipo, exc, tb) -> None:
+        """Cualquier error en la ventana se anota y se avisa, pero la ventana sigue funcionando."""
+        escribir_log(self.datos, "".join(traceback.format_exception(exc_tipo, exc, tb)))
+        try:
+            messagebox.showerror(TITULO, f"Ocurrió un problema: {exc}\n\nEl detalle quedó en errores.log.")
+        except tk.TclError:
+            pass
+
     def _procesar_cola(self) -> None:
+        try:
+            self._procesar_mensajes()
+        except Exception:
+            self._error_en_ventana(*sys.exc_info())
+            if self.corriendo and not self.trabajador.is_alive():
+                self._marcar_corriendo(False)
+        finally:
+            if not self.cerrando:
+                self.root.after(100, self._procesar_cola)
+
+    def _procesar_mensajes(self) -> None:
         try:
             while True:
                 msg = self.cola_ui.get_nowait()
@@ -382,8 +410,6 @@ class App:
                         self.var_estado.set(msg[1])
         except queue.Empty:
             pass
-        if not self.cerrando:
-            self.root.after(100, self._procesar_cola)
 
     def _dialogo(self, mensaje: str, opciones: list[str], respuesta: queue.Queue) -> None:
         """Muestra un aviso con botones. Cerrar el aviso con la X equivale a la última opción."""
@@ -391,6 +417,11 @@ class App:
         win.title(TITULO)
         win.transient(self.root)
         win.attributes("-topmost", True)
+        # Abajo a la derecha, para no tapar el formulario de Facebook (por ejemplo, el de iniciar sesión).
+        win.update_idletasks()
+        x = max(0, win.winfo_screenwidth() - 520)
+        y = max(0, win.winfo_screenheight() - 260)
+        win.geometry(f"+{x}+{y}")
         contestado = []
 
         def responder(opcion: str) -> None:

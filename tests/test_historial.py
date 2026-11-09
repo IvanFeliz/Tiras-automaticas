@@ -48,3 +48,18 @@ def test_ultimas_publicaciones(tmp_path):
     h.agregar(_r(datetime(2026, 11, 9, 9), 2, "L1", "publicado"))
     h.agregar(_r(datetime(2026, 11, 9, 13), 3, "L2", "saltado"))
     assert h.ultimas_publicaciones() == {"L1": datetime(2026, 11, 9, 12)}
+
+
+def test_historial_guardado_desde_excel(tmp_path):
+    """Excel guarda en ANSI, con ';' y fechas dd/mm/aaaa."""
+    ruta = tmp_path / "h.csv"
+    contenido = ("fecha_hora;dia;tira;numero;titulo;grupo;link_grupo;archivo_ubicacion;resultado\r\n"
+                 "09/11/2026 10:00;1.lunes;TIRA 1;1;Batería;Grupo;L1;0.UBICACIÓN.mp4;publicado\r\n")
+    ruta.write_bytes(contenido.encode("cp1252"))
+    h = Historial(ruta)
+    assert h.publicadas("1.lunes", "TIRA 1", date(2026, 11, 9)) == {1: "L1"}
+    assert h.ultima_publicacion("L1") == datetime(2026, 11, 9, 10, 0)
+    h.agregar(_r(datetime(2026, 11, 9, 11), 2, "L2", "publicado"))
+    h2 = Historial(ruta)
+    assert h2.publicadas("1.lunes", "TIRA 1", date(2026, 11, 9)) == {1: "L1", 2: "L2"}
+    assert ruta.read_bytes().startswith(b"\xef\xbb\xbf")

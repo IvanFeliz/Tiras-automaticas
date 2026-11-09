@@ -7,8 +7,11 @@ texto y sube la imagen y la foto de ubicación. **Tú solo revisas y das clic en
 
 1. En GitHub, entra a la pestaña **Actions** de este repositorio.
 2. Abre la ejecución más reciente que tenga ✅ verde.
-3. Hasta abajo, en **Artifacts**, descarga **PublicadorTiras**. Es un `.zip`: descomprímelo y te queda
-   `PublicadorTiras.exe`. Ponlo donde quieras, por ejemplo en el Escritorio.
+3. Hasta abajo, en **Artifacts**, descarga **PublicadorTiras**. Es un `.zip`: descomprímelo completo
+   (clic derecho → **Extraer todo…**). Te queda una carpeta con `PublicadorTiras.exe` y una subcarpeta
+   `_internal`. **No saques el `.exe` de esa carpeta**: necesita lo que está en `_internal`.
+   Puedes poner la carpeta donde quieras y crear un acceso directo al `.exe` en el Escritorio
+   (clic derecho en `PublicadorTiras.exe` → **Enviar a → Escritorio (crear acceso directo)**).
 
 > Si Windows muestra «Windows protegió su PC», da clic en **Más información → Ejecutar de todas formas**.
 > Sale porque el programa no tiene firma digital.
@@ -47,7 +50,8 @@ Con **Abrir carpeta de datos** ves:
 
 - `grupos.txt`: la lista de grupos. Si pones `#` al principio de una línea, el programa ignora ese grupo.
   Si le quitas el `#`, el grupo vuelve a usarse.
-- `historial.csv`: todo lo que se publicó, en qué grupo y a qué hora. Se abre en Excel.
+- `historial.csv`: todo lo que se publicó, en qué grupo y a qué hora. Se abre en Excel para consultarlo;
+  mejor **no lo guardes desde Excel** (si pasa, el programa lo repara solo, pero es mejor evitarlo).
 - `capturas/`: capturas de pantalla de cuando algo falló.
 - `errores.log`: detalles técnicos de errores inesperados (útil para arreglar el programa).
 

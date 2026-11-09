@@ -1,6 +1,7 @@
 """Lista de grupos en grupos.txt: una línea 'nombre | link'; '#' al inicio = ignorado."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
@@ -83,7 +84,13 @@ def _leer(ruta: Path) -> list[_Linea]:
 
 
 def _escribir(ruta: Path, lineas: list[str]) -> None:
-    Path(ruta).write_text("".join(l + "\n" for l in lineas), encoding="utf-8")
+    """Escribe en un archivo temporal y lo reemplaza: un apagón no deja grupos.txt vacío."""
+    ruta = Path(ruta)
+    tmp = ruta.with_name(ruta.name + ".tmp")
+    tmp.write_text("".join(l + "\n" for l in lineas), encoding="utf-8")
+    if ruta.exists():
+        ruta.with_name(ruta.name + ".bak").write_bytes(ruta.read_bytes())
+    os.replace(tmp, ruta)
 
 
 def cargar_grupos(ruta: Path) -> list[Grupo]:
@@ -94,6 +101,9 @@ def actualizar_grupos(ruta: Path, encontrados: list[tuple[str, str]]) -> int:
     lineas = _leer(ruta)
     encontrados = [(n, normalizar_link_grupo(l) or l) for n, l in encontrados]
     hallados = {link: nombre for nombre, link in encontrados}
+    activos = sum(1 for l in lineas if l.grupo is not None and l.grupo.activo)
+    # Si el escaneo encontró muy pocos (internet lento, página a medio cargar), no se desactiva nada.
+    desactivar_faltantes = len(hallados) >= activos * 0.5
     conocidos: set[str] = set()
     salida: list[str] = []
     for l in lineas:
@@ -111,6 +121,8 @@ def actualizar_grupos(ruta: Path, encontrados: list[tuple[str, str]]) -> int:
                 salida.append(_formatear(g))
             else:
                 salida.append(l.original.strip())
+        elif g.activo and not desactivar_faltantes:
+            salida.append(l.original.strip())
         elif g.activo or l.auto:
             g.activo = False
             salida.append(_formatear(g, auto=True))

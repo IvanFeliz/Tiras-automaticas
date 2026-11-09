@@ -88,3 +88,16 @@ def test_cerrar_con_pregunta_abierta_responde_detener(ventana):
     root.after(200, app._al_cerrar)
     app._procesar_cola()
     assert respuesta.get(timeout=2) == "Detener"
+
+
+def test_error_en_la_ventana_no_la_congela(ventana, monkeypatch):
+    root, _ = ventana
+    app = root.app
+    monkeypatch.setattr(app, "_mostrar_tira", lambda *a: (_ for _ in ()).throw(PermissionError("USB")))
+    monkeypatch.setattr("publicador.app.messagebox.showerror", lambda *a, **k: None)
+    for ident in root.tk.call("after", "info"):
+        root.after_cancel(ident)
+    app.cola_ui.put(("fin", "listo"))
+    app._procesar_cola()  # no debe lanzar
+    assert root.tk.call("after", "info")  # se volvió a programar
+    assert "PermissionError" in (app.datos / "errores.log").read_text(encoding="utf-8")
