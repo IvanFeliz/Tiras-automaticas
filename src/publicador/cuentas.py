@@ -1,7 +1,9 @@
 """Cuentas de Facebook (perfil y Páginas) y su archivo de grupos."""
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
@@ -25,7 +27,10 @@ def cargar_cuentas(ruta: Path) -> tuple[list[Cuenta], str]:
 
 def guardar_cuentas(ruta: Path, cuentas: list[Cuenta], ultima: str) -> None:
     datos = {"cuentas": [asdict(c) for c in cuentas], "ultima": ultima}
-    Path(ruta).write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
+    ruta = Path(ruta)
+    tmp = ruta.with_name(ruta.name + ".tmp")
+    tmp.write_text(json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, ruta)
 
 
 def principal(cuentas: list[Cuenta]) -> Cuenta | None:
@@ -37,7 +42,9 @@ def principal(cuentas: list[Cuenta]) -> Cuenta | None:
 
 def _slug(nombre: str) -> str:
     sin_acentos = unicodedata.normalize("NFKD", nombre).encode("ascii", "ignore").decode()
-    return re.sub(r"[^a-z0-9]+", "-", sin_acentos.lower()).strip("-") or "cuenta"
+    legible = re.sub(r"[^a-z0-9]+", "-", sin_acentos.lower()).strip("-")[:40] or "cuenta"
+    # Un pedacito del nombre exacto para que dos cuentas parecidas nunca compartan archivo.
+    return f"{legible}-{hashlib.sha1(nombre.encode('utf-8')).hexdigest()[:6]}"
 
 
 def ruta_grupos(datos: Path, cuenta: str) -> Path:

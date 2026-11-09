@@ -268,16 +268,21 @@ class App:
         fila = ttk.Frame(marco)
         fila.grid(row=6, column=0, columnspan=3, sticky="we", pady=(6, 0))
         self.var_modo = tk.StringVar(value=self.cfg.modo)
-        ttk.Radiobutton(fila, text="Con revisión (tú das clic)", variable=self.var_modo, value="revision",
-                        command=self._cambio_ritmo).pack(side="left")
-        ttk.Radiobutton(fila, text="Automático", variable=self.var_modo, value="automatico",
-                        command=self._cambio_ritmo).pack(side="left", padx=(8, 12))
+        self.controles_ritmo: list = []
+        r1 = ttk.Radiobutton(fila, text="Con revisión (tú das clic)", variable=self.var_modo, value="revision",
+                             command=self._cambio_ritmo)
+        r1.pack(side="left")
+        r2 = ttk.Radiobutton(fila, text="Automático", variable=self.var_modo, value="automatico",
+                             command=self._cambio_ritmo)
+        r2.pack(side="left", padx=(8, 12))
+        self.controles_ritmo += [r1, r2]
         ttk.Label(fila, text="Esperar entre").pack(side="left")
         self.var_espera_min = tk.IntVar(value=self.cfg.espera_min)
         self.var_espera_max = tk.IntVar(value=self.cfg.espera_max)
         for var, texto in ((self.var_espera_min, "y"), (self.var_espera_max, "minutos")):
             caja = ttk.Spinbox(fila, from_=2, to=240, width=4, textvariable=var, command=self._cambio_ritmo)
             caja.pack(side="left", padx=3)
+            self.controles_ritmo.append(caja)
             caja.bind("<FocusOut>", lambda e: self._cambio_ritmo())
             caja.bind("<KeyRelease>", lambda e: self._revisar_riesgo())
             ttk.Label(fila, text=texto).pack(side="left")
@@ -356,7 +361,22 @@ class App:
         self.trabajador.comandos.put(("cuentas",))
 
     def _cuentas_encontradas(self, lista: list[tuple[str, str]]) -> None:
-        self.cuentas = [Cuenta(n, t) for n, t in lista]
+        nombres = [n for n, _ in lista]
+        anterior = self._principal()
+        if anterior in nombres:
+            elegido = anterior  # se respeta el principal que ya se conocía, aunque cambie el orden del menú
+        elif len(nombres) == 1:
+            elegido = nombres[0]
+        else:
+            elegido = self._elegir_opcion("¿Cuál es el perfil principal (con el que se publicaba antes)? "
+                                          "Los grupos y el historial de antes quedan a su nombre.", nombres)
+            if elegido not in nombres:
+                elegido = nombres[0]
+        self.cuentas = [Cuenta(n, "perfil" if n == elegido else "pagina") for n in nombres]
+        try:
+            self.historial.fijar_cuenta_vacia(elegido)
+        except OSError:
+            pass
         if self._ultima_cuenta not in [c.nombre for c in self.cuentas]:
             self._ultima_cuenta = self._principal()
         self.historial.cuenta_principal = self._principal()
@@ -543,6 +563,8 @@ class App:
         for b in (self.btn_grupos, self.btn_cambiar, self.btn_escoger, self.btn_cuentas):
             b.configure(state="disabled" if corriendo else "normal")
         self.combo_cuenta.configure(state="disabled" if corriendo else "readonly")
+        for w in self.controles_ritmo:
+            w.configure(state="disabled" if corriendo else "normal")
         for w in (self.combo_dia, self.combo_tira):
             w.configure(state="disabled" if corriendo else "readonly")
         self._actualizar_botones()
@@ -589,7 +611,7 @@ class App:
                 elif tipo == "aviso":
                     _, nivel, mensaje = msg
                     self._mostrar_aviso(nivel, mensaje)
-                    if nivel == "rojo":
+                    if nivel == "rojo" and not mensaje.startswith("⛔"):  # el bloqueo tiene su propia ventana
                         messagebox.showwarning(TITULO, mensaje)
                 elif tipo == "cuentas":
                     self._cuentas_encontradas(msg[1])
@@ -612,13 +634,19 @@ class App:
         return respuesta.get_nowait()
 
     def _cuenta_bloqueada(self, cuenta: str, mensaje: str, args: tuple) -> None:
-        otras = [c.nombre for c in self.cuentas if c.nombre != cuenta]
+        hoy = date.today()
+        otras = [c.nombre for c in self.cuentas
+                 if c.nombre != cuenta and not self.historial.bloqueada_hoy(c.nombre, hoy)]
         texto = (f"⛔ Facebook bloqueó o pidió verificación a «{cuenta}»:\n«{mensaje}»\n\n"
                  "La tira se detuvo. Lo que ya se publicó quedó guardado.")
         self._mostrar_aviso("rojo", texto.replace("\n\n", " ").replace("\n", " "))
         opciones = (["Seguir con otra cuenta"] if otras else []) + [DETENER]
         if self._elegir_opcion(texto, opciones) == "Seguir con otra cuenta":
             nueva = self._elegir_opcion("¿Con qué cuenta sigo la tira?", otras + ["Cancelar"])
+            if nueva in otras and not any(g.activo for g in cargar_grupos(ruta_grupos(self.datos, nueva))):
+                messagebox.showinfo(TITULO, f"«{nueva}» todavía no tiene grupos. Escógela, da clic en "
+                                            "«Actualizar grupos» y vuelve a empezar la tira.")
+                nueva = ""
             if nueva in otras:
                 self.combo_cuenta.set(nueva)
                 self._cuenta_elegida(avisar=False)

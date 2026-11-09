@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 MARCA_AUTO = "(ya no aparece)"
+MARCAS = (MARCA_AUTO, "(sin permiso)")
 RUTAS_ESPECIALES = {"feed", "discover", "joins", "create", "notifications", "search", "you", "categories"}
 
 
@@ -50,9 +51,11 @@ def _parsear(linea: str) -> _Linea:
     if texto.startswith("#"):
         activo = False
         texto = texto.lstrip("#").strip()
-        if texto.startswith(MARCA_AUTO):
-            auto = True
-            texto = texto[len(MARCA_AUTO):].strip()
+        for marca in MARCAS:
+            if texto.startswith(marca):
+                auto = marca == MARCA_AUTO
+                texto = texto[len(marca):].strip()
+                break
     if "|" not in texto:
         return _Linea(linea)
     nombre, link = (p.strip() for p in texto.split("|", 1))
@@ -138,11 +141,11 @@ def actualizar_grupos(ruta: Path, encontrados: list[tuple[str, str]]) -> int:
     return nuevos
 
 
-def marcar_ignorado(ruta: Path, link: str) -> None:
+def marcar_ignorado(ruta: Path, link: str, motivo: str = "") -> None:
     salida = []
     for l in _leer(ruta):
         if l.grupo is not None and l.grupo.link == (normalizar_link_grupo(link) or link) and l.grupo.activo:
-            salida.append(f"# {l.original.strip()}")
+            salida.append(f"# ({motivo}) {l.original.strip()}" if motivo else f"# {l.original.strip()}")
         else:
             salida.append(l.original)
     _escribir(ruta, salida)

@@ -96,3 +96,14 @@ def test_escritura_con_respaldo(tmp_path):
     marcar_ignorado(r, L1)
     assert (tmp_path / "grupos.txt.bak").read_text(encoding="utf-8") == f"A | {L1}\n"
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_marca_sin_permiso(tmp_path):
+    r = tmp_path / "grupos.txt"
+    r.write_text(f"A | {L1}\nB | {L2}\n", encoding="utf-8")
+    marcar_ignorado(r, L1, "sin permiso")
+    assert r.read_text(encoding="utf-8").splitlines()[0] == f"# (sin permiso) A | {L1}"
+    gs = cargar_grupos(r)
+    assert (gs[0].nombre, gs[0].activo) == ("A", False)
+    actualizar_grupos(r, [("A", L1), ("B", L2)])
+    assert {g.link: g.activo for g in cargar_grupos(r)} == {L1: False, L2: True}

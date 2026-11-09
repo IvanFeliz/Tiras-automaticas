@@ -98,3 +98,23 @@ def test_filtros_por_cuenta(tmp_path):
     assert h.bloqueada_hoy("Suc", t.date()) is True
     assert h.bloqueada_hoy("Yo", t.date()) is False
     assert h.ultimas_publicaciones() == {"L1": t, "L2": t}
+
+
+def test_fijar_cuenta_de_filas_viejas(tmp_path):
+    ruta = tmp_path / "h.csv"
+    ruta.write_text("fecha_hora,dia,tira,numero,titulo,grupo,link_grupo,archivo_ubicacion,resultado\n"
+                    "2026-11-09 10:00:00,1.lunes,TIRA 1,1,T,G,L1,u,publicado\n", encoding="utf-8-sig")
+    h = Historial(ruta)
+    h.fijar_cuenta_vacia("Yo")
+    h2 = Historial(ruta, cuenta_principal="Otra")  # aunque cambie la principal, ya quedaron fijas
+    assert h2.ultimas_publicaciones("Yo") == {"L1": datetime(2026, 11, 9, 10)}
+    assert h2.ultimas_publicaciones("Otra") == {}
+
+
+def test_reescritura_conserva_filas_raras(tmp_path):
+    ruta = tmp_path / "h.csv"
+    ruta.write_text("fecha_hora,dia,tira,numero,titulo,grupo,link_grupo,archivo_ubicacion,resultado\n"
+                    "08/11/2026 10:00 a. m.,1.lunes,TIRA 1,1,T,G,L1,u,publicado\n", encoding="utf-8-sig")
+    h = Historial(ruta)
+    h.agregar(_rc(datetime(2026, 11, 9, 11), 2, "L2", "publicado", "Yo"))
+    assert "08/11/2026 10:00 a. m." in ruta.read_text(encoding="utf-8-sig")

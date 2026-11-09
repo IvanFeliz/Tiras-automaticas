@@ -23,7 +23,10 @@ def test_principal():
 def test_ruta_grupos(tmp_path):
     r = ruta_grupos(tmp_path, "Sucursal Altamirano #13 — Niño")
     assert r.parent == tmp_path / "grupos"
-    assert r.name == "sucursal-altamirano-13-nino.txt"
+    assert r.name.startswith("sucursal-altamirano-13-nino-") and r.suffix == ".txt"
+    assert ruta_grupos(tmp_path, "Reparaciones Cel") != ruta_grupos(tmp_path, "Reparaciones-Cel")
+    assert ruta_grupos(tmp_path, "🔧📱") != ruta_grupos(tmp_path, "📱🔧")
+    assert ruta_grupos(tmp_path, "Yo") == ruta_grupos(tmp_path, "Yo")
 
 
 def test_migrar_grupos(tmp_path):
@@ -41,3 +44,10 @@ def test_migrar_no_pisa(tmp_path):
     migrar_grupos(tmp_path, "Yo")
     assert destino.read_text(encoding="utf-8") == "B | y\n"
     assert (tmp_path / "grupos.txt").exists()
+
+
+
+def test_guardar_sin_temporales(tmp_path):
+    guardar_cuentas(tmp_path / "c.json", [Cuenta("A", "perfil")], "A")
+    assert not list(tmp_path.glob("*.tmp"))
+    assert cargar_cuentas(tmp_path / "c.json")[1] == "A"

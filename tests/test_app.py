@@ -136,7 +136,8 @@ def test_cuentas_en_la_ventana_y_migracion(ventana_cuentas):
     app = root.app
     assert list(app.combo_cuenta["values"]) == ["Reparaciones Gigabyte", "Gigabyte Centro", "Gigabyte Norte"]
     assert app.combo_cuenta.get() == "Gigabyte Centro"
-    assert (datos / "grupos" / "reparaciones-gigabyte.txt").exists()
+    from publicador.cuentas import ruta_grupos
+    assert ruta_grupos(datos, "Reparaciones Gigabyte").exists()
     assert not (datos / "grupos.txt").exists()
     assert "sin grupos" in app.var_grupos.get()  # la Página todavía no tiene grupos
 
@@ -159,6 +160,10 @@ def test_aviso_de_riesgo_en_vivo(ventana_cuentas):
 def test_bloqueo_ofrece_seguir_con_otra_cuenta(ventana_cuentas, monkeypatch):
     root, _ = ventana_cuentas
     app = root.app
+    from publicador.cuentas import ruta_grupos
+    destino = ruta_grupos(app.datos, "Gigabyte Norte")
+    destino.parent.mkdir(exist_ok=True)
+    destino.write_text("N | https://www.facebook.com/groups/9/\n", encoding="utf-8")
     respuestas = iter(["Seguir con otra cuenta", "Gigabyte Norte"])
     monkeypatch.setattr(app, "_elegir_opcion", lambda mensaje, opciones: next(respuestas))
     app.corriendo = True
@@ -169,3 +174,54 @@ def test_bloqueo_ofrece_seguir_con_otra_cuenta(ventana_cuentas, monkeypatch):
     assert cmd[0] == "tira" and cmd[1:4] == tira_args
     assert cmd[6] == "Gigabyte Norte"
     assert app.combo_cuenta.get() == "Gigabyte Norte"
+
+
+def test_primera_vez_pregunta_cual_es_el_principal(ventana, monkeypatch):
+    root, _ = ventana
+    app = root.app
+    preguntas = []
+
+    def elegir(mensaje, opciones):
+        preguntas.append((mensaje, opciones))
+        return "Gigabyte Centro"
+    monkeypatch.setattr(app, "_elegir_opcion", elegir)
+    app._cuentas_encontradas([("Reparaciones Gigabyte", "perfil"), ("Gigabyte Centro", "pagina")])
+    assert preguntas and "principal" in preguntas[0][0]
+    assert {c.nombre: c.tipo for c in app.cuentas} == {"Reparaciones Gigabyte": "pagina", "Gigabyte Centro": "perfil"}
+    assert app.historial.cuenta_principal == "Gigabyte Centro"
+
+
+def test_cuentas_conocidas_no_cambian_de_principal(ventana_cuentas, monkeypatch):
+    root, _ = ventana_cuentas
+    app = root.app
+    monkeypatch.setattr(app, "_elegir_opcion", lambda *a: (_ for _ in ()).throw(AssertionError("no debe preguntar")))
+    # Facebook ahora lista primero una Página
+    app._cuentas_encontradas([("Gigabyte Norte", "perfil"), ("Reparaciones Gigabyte", "pagina"),
+                              ("Gigabyte Centro", "pagina")])
+    assert app.historial.cuenta_principal == "Reparaciones Gigabyte"
+
+
+def test_controles_de_ritmo_bloqueados_mientras_corre(ventana_cuentas):
+    root, _ = ventana_cuentas
+    app = root.app
+    app._marcar_corriendo(True, tira=True)
+    assert all(str(w["state"]) == "disabled" for w in app.controles_ritmo)
+    app._marcar_corriendo(False)
+    assert all(str(w["state"]) != "disabled" for w in app.controles_ritmo)
+
+
+def test_seguir_no_ofrece_cuentas_bloqueadas_hoy(ventana_cuentas, monkeypatch):
+    from datetime import datetime as _dt
+    from publicador.historial import Registro
+    root, _ = ventana_cuentas
+    app = root.app
+    app.historial.agregar(Registro(_dt.now(), "d", "t", 0, "", "", "", "", "bloqueo", "Gigabyte Norte"))
+    vistas = []
+
+    def elegir(mensaje, opciones):
+        vistas.append(opciones)
+        return "Seguir con otra cuenta" if len(vistas) == 1 else "Cancelar"
+    monkeypatch.setattr(app, "_elegir_opcion", elegir)
+    app.corriendo = True
+    app._cuenta_bloqueada("Gigabyte Centro", "x", ("T", "d", "t"))
+    assert "Gigabyte Norte" not in vistas[1] and "Reparaciones Gigabyte" in vistas[1]

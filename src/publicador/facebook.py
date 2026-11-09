@@ -16,7 +16,7 @@ from .sesion import (Controles, CuentaBloqueada, ErrorFacebook, GrupoSinPermiso,
 
 # --- Selectores y textos (ajustar aquí si Facebook cambia) -----------------------------
 URL_TUS_GRUPOS = "https://www.facebook.com/groups/joins/?nav_source=tab"
-TEXTO_ABRIR_COMPOSITOR = re.compile(r"Escribe algo|Crea una publicaci[oó]n p[uú]blica", re.I)
+TEXTO_ABRIR_COMPOSITOR = re.compile(r"Escribe algo|Crea una publicaci[oó]n p[uú]blica|Write something", re.I)
 SEL_DIALOGO = '[role="dialog"]'
 SEL_EDITOR = '[contenteditable="true"]'
 SEL_INPUT_ARCHIVOS = 'input[type="file"]'
@@ -41,6 +41,7 @@ ESPERA_BOTON_PUBLICAR_MS = 120_000
 # Señales de bloqueo o verificación.
 TEXTO_BLOQUEO = re.compile(r"bloquead[oa]s? temporalmente|est[aá]s bloquead|restringid|confirma tu identidad|"
                            r"revisi[oó]n de seguridad|actividad sospechosa|limitamos|demasiado r[aá]pido|"
+                           r"no puedes usar esta funci[oó]n|can.t use this feature|we limit how often|"
                            r"temporarily blocked|you.re blocked|restricted|confirm your identity", re.I)
 SEL_AVISOS_BLOQUEO = '[role="dialog"], [role="alertdialog"], [role="alert"]'
 
@@ -238,6 +239,13 @@ class Facebook:
             boton = p.get_by_text(TEXTO_ABRIR_COMPOSITOR)
             if boton.count() == 0:
                 self.revisar_bloqueo()
+                # Solo se concluye «sin permiso» si la página sí terminó de cargar (no por internet lento).
+                try:
+                    cargada = p.evaluate("document.readyState") == "complete"
+                except Exception:
+                    cargada = False
+                if not cargada:
+                    raise ErrorFacebook("El grupo no terminó de cargar.")
                 raise GrupoSinPermiso("no aparece el cuadro «Escribe algo…»")
         boton.first.click()
         dialogo = p.locator(SEL_DIALOGO).filter(has=p.locator(SEL_EDITOR)).last
@@ -341,20 +349,27 @@ class Facebook:
         return True
 
     def esperar_resultado(self, controles: Controles) -> str:
+        limite = getattr(controles, "limite_s", None)
+        fin = time.monotonic() + limite if limite else None
         while True:
             if self.cerrado:
                 raise NavegadorCerrado()
+            if fin is not None and time.monotonic() > fin:
+                return "sin_respuesta"
             # Primero se revisa si ya se publicó: gana a un «Saltar» apretado justo después.
             if not self._dialogo_abierto() and self._sigue_cerrado():
                 if self.cerrado:
                     raise NavegadorCerrado()
-                self.revisar_bloqueo()
                 try:
                     publicado = bool(self.pagina.evaluate("window.__pubClick === true"))
                 except Exception:
                     if self.cerrado:
                         raise NavegadorCerrado()
                     publicado = False
+                try:
+                    self.revisar_bloqueo()
+                except CuentaBloqueada as e:
+                    raise CuentaBloqueada(e.mensaje, publicado=publicado) from e
                 if not publicado:
                     return "cerrado"
                 return "fallo" if self._hay_aviso_de_error() else "publicado"
@@ -418,17 +433,32 @@ class Facebook:
                 raise NavegadorCerrado()
 
     # --- publicar solo -----------------------------------------------------------------
-    def publicar(self) -> None:
-        """Da clic en «Publicar» cuando esté activo (espera a que terminen de subir los archivos)."""
+    def publicar(self, controles: Controles | None = None) -> bool:
+        """Da clic en «Publicar» cuando esté activo (espera a que terminen de subir los archivos).
+
+        Devuelve False, sin dar clic, si mientras espera se pide Saltar o Detener.
+        """
         boton = self._dialogo.locator(SEL_PUBLICAR_ACTIVO).last
-        try:
-            boton.wait_for(state="visible", timeout=ESPERA_BOTON_PUBLICAR_MS)
-        except Exception as e:
+        fin = time.monotonic() + ESPERA_BOTON_PUBLICAR_MS / 1000
+        while time.monotonic() < fin:
+            if controles is not None and (controles.saltar.is_set() or controles.detener.is_set()):
+                return False
             if self.cerrado:
-                raise NavegadorCerrado() from e
-            self.revisar_bloqueo()
-            raise ErrorFacebook("El botón «Publicar» no se activó.") from e
-        boton.click()
+                raise NavegadorCerrado()
+            try:
+                if boton.count() > 0 and boton.is_visible():
+                    boton.click()
+                    return True
+            except Exception:
+                if self.cerrado:
+                    raise NavegadorCerrado()
+            time.sleep(0.5)
+        self.revisar_bloqueo()
+        raise ErrorFacebook("El botón «Publicar» no se activó.")
+
+    def asegurar_cuenta(self, nombre: str) -> None:
+        """Confirma que la cuenta activa sea esta; si no, se cambia (o lanza ErrorFacebook)."""
+        self.cambiar_cuenta(nombre)
 
     # --- cuentas -----------------------------------------------------------------------
     def _abrir_lista_perfiles(self):
@@ -440,7 +470,7 @@ class Facebook:
         except Exception as e:
             raise ErrorFacebook("No se encontró el menú de cuenta (tu foto, arriba a la derecha).") from e
         menu.click()
-        perfiles = p.locator(SEL_PERFIL)
+        perfiles = p.locator('[role="dialog"], [role="menu"]').locator(SEL_PERFIL)
         ver = p.get_by_text(TEXTO_VER_PERFILES)
         try:
             ver.first.wait_for(state="visible", timeout=5_000)

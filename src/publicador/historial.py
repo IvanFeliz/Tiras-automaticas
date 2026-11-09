@@ -57,25 +57,56 @@ class Historial:
             normal = False
         return texto, normal
 
+    def _filas_crudas(self) -> list[dict]:
+        """Todas las filas tal cual, aunque la fecha no se entienda."""
+        if not self.ruta.exists():
+            return []
+        texto, _ = self._leer_crudo()
+        primera = texto.split("\n", 1)[0]
+        delimitador = ";" if (";" in primera and "," not in primera) else ","
+        filas = []
+        for fila in csv.DictReader(io.StringIO(texto, newline=""), delimiter=delimitador):
+            filas.append({k: (fila.get(k) or "") for k in CAMPOS})
+        return filas
+
+    def _reescribir(self, cambiar=None) -> None:
+        """Reescribe el archivo en el formato del programa (con respaldo .bak), sin perder filas."""
+        filas = self._filas_crudas()
+        tmp = self.ruta.with_suffix(".csv.tmp")
+        with tmp.open("w", encoding="utf-8-sig", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=CAMPOS, extrasaction="ignore")
+            w.writeheader()
+            for fila in filas:
+                fecha = _fecha(fila["fecha_hora"])
+                if fecha is not None:
+                    fila["fecha_hora"] = fecha.strftime(FORMATO)
+                if cambiar is not None:
+                    cambiar(fila)
+                w.writerow(fila)
+        self.ruta.with_suffix(".csv.bak").write_bytes(self.ruta.read_bytes())
+        tmp.replace(self.ruta)
+
     def _normalizar(self) -> None:
-        """Si Excel cambió el formato, se reescribe el archivo en el formato del programa."""
+        """Si Excel cambió el formato (o es de la versión sin cuentas), se reescribe."""
         if not self.ruta.exists() or self.ruta.stat().st_size == 0:
             return
         texto, normal = self._leer_crudo()
         encabezado = texto.split("\n", 1)[0]
         if normal and "cuenta" in encabezado:
             return
-        filas = self._filas()
-        tmp = self.ruta.with_suffix(".csv.tmp")
-        with tmp.open("w", encoding="utf-8-sig", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=CAMPOS, extrasaction="ignore")
-            w.writeheader()
-            for fila in filas:
-                fila = dict(fila)
-                fila["fecha_hora"] = fila["_fecha"].strftime(FORMATO)
-                w.writerow(fila)
-        self.ruta.with_suffix(".csv.bak").write_bytes(self.ruta.read_bytes())
-        tmp.replace(self.ruta)
+        self._reescribir()
+
+    def fijar_cuenta_vacia(self, cuenta: str) -> None:
+        """Las filas sin cuenta (de la versión anterior) quedan a nombre de esta cuenta, para siempre."""
+        if not cuenta or not self.ruta.exists() or self.ruta.stat().st_size == 0:
+            return
+        if not any(not f["cuenta"] for f in self._filas_crudas()):
+            return
+
+        def poner(fila: dict) -> None:
+            if not fila["cuenta"]:
+                fila["cuenta"] = cuenta
+        self._reescribir(poner)
 
     def agregar(self, r: Registro) -> None:
         self._normalizar()

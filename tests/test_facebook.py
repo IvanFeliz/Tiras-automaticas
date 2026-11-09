@@ -240,11 +240,40 @@ def test_bloqueo_al_publicar(fb, tmp_path):
     url = (DATOS / "grupo_falso.html").as_uri() + "?bloqueo_al_publicar=1"
     fb.preparar_publicacion(url, TEXTO, _archivos(tmp_path))
     fb.publicar()
-    with pytest.raises(CuentaBloqueada, match="restringida"):
+    with pytest.raises(CuentaBloqueada, match="restringida") as info:
         fb.esperar_resultado(Controles())
+    assert info.value.publicado is True  # sí se dio clic y la ventana se cerró
 
 
 def test_texto_del_anuncio_no_es_bloqueo(fb, tmp_path):
     texto = "¿Tu laptop va demasiado rápido? Contenido restringido 😅"
     fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), texto, _archivos(tmp_path))
     fb.revisar_bloqueo()  # no debe lanzar: el compositor no es un aviso
+
+
+
+def test_textos_de_limite_cuentan_como_bloqueo():
+    from publicador.facebook import TEXTO_BLOQUEO
+    for t in ("No puedes usar esta función en este momento", "You can't use this feature right now",
+              "We limit how often you can post", "Limitamos la frecuencia con la que puedes publicar"):
+        assert TEXTO_BLOQUEO.search(t), t
+
+
+def test_publicar_no_da_clic_si_se_pide_saltar(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    c = Controles()
+    c.saltar.set()
+    assert fb.publicar(c) is False
+    assert fb.pagina.evaluate("window.__pubClick") is False
+
+
+def test_limite_de_espera_tras_publicar(fb, tmp_path):
+    fb.preparar_publicacion((DATOS / "grupo_falso.html").as_uri(), TEXTO, _archivos(tmp_path))
+    assert fb.esperar_resultado(Controles(limite_s=1)) == "sin_respuesta"
+
+
+def test_asegurar_cuenta(fb):
+    fb.url_inicio = MENU
+    fb.pausa_cambio_s = 0.2
+    fb.asegurar_cuenta("Gigabyte Sucursal Centro")
+    assert fb.cuenta_actual() == "Gigabyte Sucursal Centro"

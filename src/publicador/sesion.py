@@ -35,22 +35,28 @@ class NavegadorCerrado(Exception):
 
 
 class CuentaBloqueada(Exception):
-    """Facebook bloqueó la cuenta o pidió verificación."""
+    """Facebook bloqueó la cuenta o pidió verificación.
 
-    def __init__(self, mensaje: str = ""):
+    publicado=True: el bloqueo apareció justo después de una publicación que sí salió.
+    """
+
+    def __init__(self, mensaje: str = "", publicado: bool = False):
         super().__init__(mensaje)
         self.mensaje = mensaje
+        self.publicado = publicado
 
 
 @dataclass
 class Controles:
     saltar: threading.Event = field(default_factory=threading.Event)
     detener: threading.Event = field(default_factory=threading.Event)
+    limite_s: float | None = None  # tiempo máximo esperando el resultado (None = sin límite)
 
 
 class NavegadorProto(Protocol):
+    def asegurar_cuenta(self, nombre: str) -> None: ...
     def preparar_publicacion(self, link: str, texto: str, archivos: list[Path]) -> None: ...
-    def publicar(self) -> None: ...
+    def publicar(self, controles: Controles | None = None) -> bool: ...
     def esperar_resultado(self, controles: Controles) -> str: ...
     def cerrar_compositor(self) -> None: ...
     def captura(self, nombre: str) -> Path: ...
@@ -85,9 +91,13 @@ class Resultado:
 
 REINTENTAR, SALTAR, DETENER = "Reintentar", "Saltar este grupo", "Detener"
 SI_SE_PUBLICO = "Sí se publicó"
+IGNORAR_EN_CUENTA, SOLO_SALTAR = "Ignorarlo en esta cuenta", "Solo saltarlo esta vez"
+SEGUIR = "Seguir"
 PAUSA_REVISION_S = (5, 15)
+LIMITE_TRAS_CLIC_S = 180
 AVISOS_PUBLICADAS = (24, 48)
 ERRORES_SEGUIDOS_AVISO = 3
+ERRORES_SEGUIDOS_PAUSA = 5
 
 
 def _mmss(segundos: float) -> str:
@@ -108,7 +118,8 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
     nombre_cuenta = cuenta_real or "esta cuenta"
     # Lo ya publicado de esta tira hoy cuenta con cualquier cuenta: así no se repite un anuncio.
     hechas = historial.publicadas(dia, nombre_tira, hoy)
-    excluir = set(historial.grupos_usados(dia, nombre_tira, hoy, cuenta=filtro_cuenta))
+    # Tampoco se usa un grupo donde otra cuenta ya intentó esta tira hoy (sería el mismo anuncio dos veces).
+    excluir = set(historial.grupos_usados(dia, nombre_tira, hoy))
     pendientes = [p for p in tira.publicaciones if p.numero not in hechas]
     total = len(tira.publicaciones)
     publicadas = saltadas = 0
@@ -128,9 +139,9 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 if resp != REINTENTAR:
                     return
 
-    def ignorar(grupo: Grupo) -> None:
+    def ignorar(grupo: Grupo, motivo: str = "") -> None:
         try:
-            marcar_ignorado(ruta_grupos, grupo.link)
+            marcar_ignorado(ruta_grupos, grupo.link, motivo)
         except OSError:
             ui.estado(f"No se pudo marcar «{grupo.nombre}» en {ruta_grupos.name} (¿está abierto en otro "
                       "programa?). Se sigue con otro grupo.")
@@ -139,14 +150,24 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
         return Resultado(publicadas, saltadas, motivo,
                          cuenta_real if motivo == "bloqueada" else "", mensaje_bloqueo)
 
-    def contar_error() -> None:
+    def contar_error() -> bool:
+        """Cuenta un error seguido. Devuelve False si la persona decide detener."""
         nonlocal errores_seguidos
         errores_seguidos += 1
         if errores_seguidos == ERRORES_SEGUIDOS_AVISO:
             ui.aviso("amarillo", f"Facebook podría estar limitando «{nombre_cuenta}»: van "
                                  f"{errores_seguidos} errores seguidos en distintos grupos.")
+        if errores_seguidos % ERRORES_SEGUIDOS_PAUSA == 0:
+            resp = ui.preguntar(f"Van {errores_seguidos} errores seguidos con «{nombre_cuenta}». Facebook podría "
+                                "estar limitando la cuenta. Revisa el navegador. ¿Sigo?", [SEGUIR, DETENER])
+            return resp != DETENER
+        return True
 
     def bloqueo(pub: Publicacion, grupo: Grupo | None, ubicacion: Path | None, e: CuentaBloqueada) -> Resultado:
+        nonlocal publicadas
+        if e.publicado:
+            registrar(pub, grupo, ubicacion, "publicado")
+            publicadas += 1
         ruta = fb.captura(f"bloqueo_{nombre_tira}_{pub.numero}")
         registrar(pub, grupo, ubicacion, "bloqueo")
         ui.aviso("rojo", f"⛔ Facebook bloqueó o pidió verificación a «{nombre_cuenta}»: «{e.mensaje}». "
@@ -180,10 +201,30 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
             espera = rng.uniform(ritmo.espera_min, ritmo.espera_max) * 60
             if not esperar(espera, contar=True):
                 return fin("detenida")
+        controles.saltar.clear()
         grupo: Grupo | None = None
+        cuenta_confirmada = False
         while True:
             if controles.detener.is_set():
                 return fin("detenida")
+            if cuenta and not cuenta_confirmada:
+                # Antes de cada publicación se confirma la cuenta activa (alguien pudo cambiarla, o al volver
+                # a iniciar sesión Facebook regresa al perfil personal).
+                try:
+                    fb.asegurar_cuenta(cuenta)
+                except CuentaBloqueada as e:
+                    return bloqueo(pub, None, None, e)
+                except SesionCerrada:
+                    resp = ui.preguntar("Facebook pide iniciar sesión. Inicia sesión en el navegador y da clic en "
+                                        "Continuar.", ["Continuar", DETENER])
+                    if resp == DETENER:
+                        return fin("detenida")
+                    continue
+                except ErrorFacebook as e:
+                    ui.aviso("rojo", f"No se pudo confirmar que esté activa la cuenta «{cuenta}»: {e} "
+                                     "Se detuvo para no publicar con otra cuenta.")
+                    return fin("detenida")
+                cuenta_confirmada = True
             controles.saltar.clear()
             if grupo is None:
                 grupo = elegir_grupo(cargar_grupos(ruta_grupos), historial, ahora(), minutos, excluir, rng,
@@ -205,13 +246,24 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                                     "Continuar.", ["Continuar", DETENER])
                 if resp == DETENER:
                     return fin("detenida")
+                cuenta_confirmada = False
                 continue  # mismo grupo
             except GrupoSinPermiso as e:
                 registrar(pub, grupo, ubicacion, "error")
                 fb.cerrar_compositor()
-                ignorar(grupo)
-                ui.estado(f"«{grupo.nombre}» no deja publicar a «{nombre_cuenta}» ({e}); "
-                          "se ignora en esta cuenta y se usa otro grupo.")
+                if ritmo.automatico:
+                    ignorar(grupo, "sin permiso")
+                    ui.estado(f"«{grupo.nombre}» no deja publicar a «{nombre_cuenta}» ({e}); "
+                              "se ignora en esta cuenta y se usa otro grupo.")
+                    if not contar_error():
+                        return fin("detenida")
+                else:
+                    resp = ui.preguntar(f"Parece que «{nombre_cuenta}» no puede publicar en «{grupo.nombre}» ({e}). "
+                                        "¿Lo ignoro en esta cuenta?", [IGNORAR_EN_CUENTA, SOLO_SALTAR, DETENER])
+                    if resp == DETENER:
+                        return fin("detenida")
+                    if resp == IGNORAR_EN_CUENTA:
+                        ignorar(grupo, "sin permiso")
                 saltadas += 1
                 grupo = None
                 continue
@@ -220,10 +272,11 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 registrar(pub, grupo, ubicacion, "error")
                 if ritmo.automatico:
                     fb.cerrar_compositor()
-                    contar_error()
                     ui.estado(f"No se pudo preparar en «{grupo.nombre}» ({e}). Se prueba otro grupo.")
                     saltadas += 1
                     grupo = None
+                    if not contar_error():
+                        return fin("detenida")
                     continue
                 resp = ui.preguntar(f"No se pudo preparar la publicación en «{grupo.nombre}»: {e}\n"
                                     f"Captura guardada en {ruta}", [REINTENTAR, SALTAR, DETENER])
@@ -237,32 +290,45 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 grupo = None
                 continue
 
+            espera_resultado = controles
             if ritmo.automatico:
                 ui.estado(f"Revisando antes de publicar en «{grupo.nombre}»…")
                 if not esperar(rng.uniform(*PAUSA_REVISION_S), contar=False):
                     fb.cerrar_compositor()
                     return fin("detenida")
-                if not controles.saltar.is_set():
-                    try:
-                        fb.publicar()
-                    except CuentaBloqueada as e:
-                        return bloqueo(pub, grupo, ubicacion, e)
-                    except ErrorFacebook as e:
-                        fb.captura(f"error_publicar_{nombre_tira}_{pub.numero}")
-                        registrar(pub, grupo, ubicacion, "error")
-                        fb.cerrar_compositor()
-                        contar_error()
-                        ui.estado(f"No se pudo dar clic en Publicar en «{grupo.nombre}» ({e}). "
-                                  "Se prueba otro grupo.")
-                        saltadas += 1
-                        grupo = None
-                        continue
+                try:
+                    clic = fb.publicar(controles)
+                except CuentaBloqueada as e:
+                    return bloqueo(pub, grupo, ubicacion, e)
+                except ErrorFacebook as e:
+                    fb.captura(f"error_publicar_{nombre_tira}_{pub.numero}")
+                    registrar(pub, grupo, ubicacion, "error")
+                    fb.cerrar_compositor()
+                    ui.estado(f"No se pudo dar clic en Publicar en «{grupo.nombre}» ({e}). Se prueba otro grupo.")
+                    saltadas += 1
+                    grupo = None
+                    if not contar_error():
+                        return fin("detenida")
+                    continue
+                if not clic:  # se apretó Detener o Saltar antes del clic
+                    fb.cerrar_compositor()
+                    if controles.detener.is_set():
+                        return fin("detenida")
+                    registrar(pub, grupo, ubicacion, "saltado")
+                    ignorar(grupo)
+                    saltadas += 1
+                    grupo = None
+                    continue
+                # Ya se dio clic: Saltar y Detener se ignoran hasta saber el resultado (si no, se repetiría el
+                # anuncio en otro grupo). Detener se atiende en cuanto termine.
+                controles.saltar.clear()
+                espera_resultado = Controles(limite_s=LIMITE_TRAS_CLIC_S)
                 ui.estado(f"Publicando en «{grupo.nombre}»… ({indice} de {total})")
             else:
                 ui.estado(f"Esperando a que des clic en Publicar… ({indice} de {total}, «{grupo.nombre}»)")
 
             try:
-                res = fb.esperar_resultado(controles)
+                res = fb.esperar_resultado(espera_resultado)
             except CuentaBloqueada as e:
                 return bloqueo(pub, grupo, ubicacion, e)
 
@@ -273,13 +339,22 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
             if res == "detener":
                 fb.cerrar_compositor()
                 return fin("detenida")
+            if res == "sin_respuesta":
+                fb.captura(f"sin_respuesta_{nombre_tira}_{pub.numero}")
+                fb.cerrar_compositor()
+                registrar(pub, grupo, ubicacion, "error")
+                ui.estado(f"La publicación en «{grupo.nombre}» no terminó a tiempo. Se sigue con la siguiente.")
+                if not contar_error():
+                    return fin("detenida")
+                break
             if res == "fallo":
                 registrar(pub, grupo, ubicacion, "error")
                 if ritmo.automatico:
                     # Si en realidad sí salió, así no se repite el anuncio en otro grupo.
-                    contar_error()
                     ui.estado(f"Facebook mostró un error al publicar en «{grupo.nombre}». "
                               "Se sigue con la siguiente publicación.")
+                    if not contar_error():
+                        return fin("detenida")
                     break
                 resp = ui.preguntar(f"Facebook mostró un error al publicar en «{grupo.nombre}». "
                                     "Revisa el grupo en el navegador.",

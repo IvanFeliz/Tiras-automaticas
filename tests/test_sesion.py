@@ -46,8 +46,14 @@ class FakeFB:
     def cerrar_compositor(self):
         self.cerrados += 1
 
-    def publicar(self):
+    def publicar(self, controles=None):
+        if controles is not None and (controles.saltar.is_set() or controles.detener.is_set()):
+            return False
         self.publicaciones_auto += 1
+        return True
+
+    def asegurar_cuenta(self, nombre):
+        self.cuentas_revisadas = getattr(self, "cuentas_revisadas", []) + [nombre]
 
     def captura(self, nombre):
         self.capturas += 1
@@ -290,7 +296,7 @@ def test_no_poder_marcar_grupo_no_detiene(entorno, monkeypatch):
 
 
 # --- Cuentas y modo automático --------------------------------------------------------
-from publicador.sesion import CuentaBloqueada, GrupoSinPermiso, Ritmo  # noqa: E402
+from publicador.sesion import CuentaBloqueada, GrupoSinPermiso, Ritmo, SesionCerrada  # noqa: E402,F811
 
 AUTO = Ritmo(modo="automatico", espera_min=2, espera_max=3)
 
@@ -340,12 +346,18 @@ def test_grupo_sin_permiso_se_ignora_sin_preguntar(entorno):
     assert ui.preguntas == [] and r.publicadas == 1
 
 
-def test_grupo_sin_permiso_tambien_en_revision(entorno):
+def test_grupo_sin_permiso_en_revision_pregunta(entorno):
     tira, rg, h = entorno(n_pubs=1)
-    fb, ui = FBExcepciones([GrupoSinPermiso("no deja publicar")]), FakeUI()
+    fb, ui = FBExcepciones([GrupoSinPermiso("no deja publicar")]), FakeUI(["Ignorarlo en esta cuenta"])
     _correr(tira, rg, h, fb, ui)
     assert {g.link: g.activo for g in cargar_grupos(rg)}[fb.preparadas[0][0]] is False
-    assert ui.preguntas == []
+
+
+def test_grupo_sin_permiso_en_revision_solo_saltar(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb, ui = FBExcepciones([GrupoSinPermiso("no deja publicar")]), FakeUI(["Solo saltarlo esta vez"])
+    _correr(tira, rg, h, fb, ui)
+    assert all(g.activo for g in cargar_grupos(rg))
 
 
 def test_error_en_auto_prueba_otro_grupo_sin_preguntar(entorno):
@@ -412,3 +424,103 @@ def test_reanudar_con_otra_cuenta_no_repite(entorno):
     fb = FakeFB()
     _auto(tira, rg, h, fb, FakeUI(), cuenta="Suc")
     assert [p[1] for p in fb.preparadas] == ["Texto 2", "Texto 3"]
+
+
+
+# --- Correcciones de la revisión de cuentas/automático --------------------------------
+def test_cuenta_se_revisa_antes_de_cada_publicacion(entorno):
+    tira, rg, h = entorno(n_pubs=2)
+    fb = FakeFB()
+    _auto(tira, rg, h, fb, FakeUI())
+    assert fb.cuentas_revisadas == ["Suc", "Suc"]
+
+
+def test_cuenta_se_revisa_despues_de_iniciar_sesion(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    fb = FBExcepciones([SesionCerrada()])
+    _auto(tira, rg, h, fb, FakeUI(["Continuar"]))
+    assert fb.cuentas_revisadas == ["Suc", "Suc"]
+
+
+def test_cuenta_no_confirmada_detiene(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+
+    class FBSinCuenta(FakeFB):
+        def asegurar_cuenta(self, nombre):
+            raise ErrorFacebook("No se pudo cambiar a la cuenta")
+    fb, ui = FBSinCuenta(), FakeUI()
+    r, _ = _auto(tira, rg, h, fb, ui)
+    assert r.motivo_fin == "detenida" and fb.preparadas == []
+    assert any(n == "rojo" for n, _ in ui.avisos)
+
+
+def test_saltar_antes_del_clic(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    c = Controles()
+    fb = FakeFB()
+    llamadas = []
+
+    def dormir(seg):
+        llamadas.append(seg)
+        if len(fb.preparadas) == 1:
+            c.saltar.set()  # la persona aprieta Saltar durante la pausa de revisión
+    r, _ = _auto(tira, rg, h, fb, FakeUI(), controles=c, dormir=dormir)
+    assert fb.publicaciones_auto == 1 and len(fb.preparadas) == 2
+    assert {g.link: g.activo for g in cargar_grupos(rg)}[fb.preparadas[0][0]] is False
+    assert [x[2] for x in _resultados(h)] == ["saltado", "publicado"]
+
+
+def test_saltar_despues_del_clic_no_repite(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    c = Controles()
+
+    class FBSaltoTardio(FakeFB):
+        def publicar(self, controles=None):
+            c.saltar.set()  # aprieta Saltar justo después del clic
+            return super().publicar(None)
+
+        def esperar_resultado(self, controles):
+            return "saltar" if controles.saltar.is_set() else "publicado"
+    fb = FBSaltoTardio()
+    _auto(tira, rg, h, fb, FakeUI(), controles=c)
+    assert [x[2] for x in _resultados(h)] == ["publicado"]
+    assert len(fb.preparadas) == 1
+
+
+def test_bloqueo_tras_publicar_cuenta_como_publicada(entorno):
+    tira, rg, h = entorno(n_pubs=2)
+
+    class FBBloqueoTrasPublicar(FakeFB):
+        def esperar_resultado(self, controles):
+            raise CuentaBloqueada("Limitamos la frecuencia", publicado=True)
+    r, _ = _auto(tira, rg, h, FBBloqueoTrasPublicar(), FakeUI())
+    assert r.motivo_fin == "bloqueada" and r.publicadas == 1
+    assert [x[2] for x in _resultados(h)] == ["publicado", "bloqueo"]
+    assert set(h.publicadas("1.lunes", "TIRA 1", HOY.date())) == {1}
+
+
+def test_otra_cuenta_no_usa_grupo_de_la_misma_tira(entorno):
+    tira, rg, h = entorno(n_pubs=2, n_grupos=3)
+    h.agregar(Registro(HOY - timedelta(hours=3), "1.lunes", "TIRA 1", 1, "T1", "G1", "https://fb/groups/1/",
+                       "a", "publicado", "Yo"))
+    fb = FakeFB()
+    _auto(tira, rg, h, fb, FakeUI(), cuenta="Suc")
+    assert "https://fb/groups/1/" not in [p[0] for p in fb.preparadas]
+
+
+def test_sin_respuesta_tras_clic(entorno):
+    tira, rg, h = entorno(n_pubs=2)
+    fb = FakeFB(["sin_respuesta", "publicado"])
+    r, _ = _auto(tira, rg, h, fb, FakeUI())
+    assert [p[1] for p in fb.preparadas] == ["Texto 1", "Texto 2"]
+    assert [x[2] for x in _resultados(h)] == ["error", "publicado"]
+    assert fb.cerrados >= 1 and fb.capturas >= 1
+
+
+def test_cinco_errores_seguidos_pregunta(entorno):
+    tira, rg, h = entorno(n_pubs=1, n_grupos=8)
+    fb = FBExcepciones([ErrorFacebook(str(i)) for i in range(5)])
+    ui = FakeUI(["Detener"])
+    r, _ = _auto(tira, rg, h, fb, ui)
+    assert r.motivo_fin == "detenida"
+    assert any("errores seguidos" in p for p in ui.preguntas)

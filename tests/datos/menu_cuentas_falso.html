@@ -3,6 +3,8 @@
 <body>
 <!-- Imita el menú de cuenta de Facebook: foto arriba a la derecha → «Ver todos los perfiles» → lista. -->
 <div role="button" aria-label="Tu perfil" tabindex="0" id="foto">foto</div>
+<!-- Un radio que NO es del menú (por ejemplo, una encuesta en el feed): no debe leerse como cuenta. -->
+<div role="radio" aria-checked="false">Encuesta: Sí</div>
 <script>
 const PERFILES = ['Reparaciones Gigabyte', 'Gigabyte Sucursal Centro', 'Gigabyte Sucursal Norte'];
 const actual = new URLSearchParams(location.search).get('cuenta') || PERFILES[0];
