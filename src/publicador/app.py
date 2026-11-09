@@ -12,10 +12,13 @@ from datetime import date, datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from .config import Config, bloquear_instancia, cargar_config, carpeta_datos, guardar_config
+from .config import (Config, ajustar_espera, bloquear_instancia, cargar_config, carpeta_datos,
+                     guardar_config)
+from .cuentas import Cuenta, cargar_cuentas, guardar_cuentas, migrar_grupos, principal, ruta_grupos
 from .grupos import actualizar_grupos, cargar_grupos
 from .historial import Historial
-from .sesion import DETENER, Controles, ErrorFacebook, NavegadorCerrado, ejecutar_tira
+from .sesion import (DETENER, Controles, ErrorFacebook, NavegadorCerrado, Ritmo, SesionCerrada,
+                     ejecutar_tira)
 from .tira import Tira, leer_tira, listar_subcarpetas
 
 TITULO = "Publicador de Tiras"
@@ -41,6 +44,9 @@ class UITk:
 
     def progreso(self, actual: int, total: int, titulo: str, grupo: str) -> None:
         self.cola.put(("progreso", actual, total, titulo, grupo))
+
+    def aviso(self, nivel: str, mensaje: str) -> None:
+        self.cola.put(("aviso", nivel, mensaje))
 
     def preguntar(self, mensaje: str, opciones: list[str]) -> str:
         respuesta: queue.Queue = queue.Queue(maxsize=1)
@@ -78,14 +84,19 @@ class Trabajador(threading.Thread):
                         pass
                 return
             try:
-                if cmd[0] == "grupos":
-                    self._grupos()
+                if cmd[0] == "cuentas":
+                    self._cuentas()
+                elif cmd[0] == "grupos":
+                    self._grupos(*cmd[1:])
                 elif cmd[0] == "tira":
                     self._tira(*cmd[1:])
             except NavegadorCerrado:
                 self._olvidar_navegador()
                 self.cola_ui.put(("fin", "⚠️ Se cerró el navegador. Da clic otra vez para continuar "
                                          "(se abrirá uno nuevo)."))
+            except SesionCerrada:
+                self.cola_ui.put(("fin", "⚠️ Facebook pide iniciar sesión. Inicia sesión en el navegador y "
+                                         "vuelve a intentar."))
             except ErrorFacebook as e:
                 self.cola_ui.put(("fin", f"⚠️ {e}"))
             except Exception as e:
@@ -110,22 +121,50 @@ class Trabajador(threading.Thread):
                 raise ErrorFacebook("Se canceló.")
             fb.pagina.goto("https://www.facebook.com/")
 
-    def _grupos(self) -> None:
+    def _inicio(self):
         fb = self._navegador()
         self.ui.estado("Abriendo Facebook…")
         fb.pagina.goto("https://www.facebook.com/")
         self._asegurar_sesion(fb)
+        return fb
+
+    def _cambiar(self, fb, cuenta: str) -> None:
+        if cuenta:
+            self.ui.estado(f"Revisando que esté activa la cuenta «{cuenta}»…")
+            fb.cambiar_cuenta(cuenta)
+
+    def _cuentas(self) -> None:
+        fb = self._inicio()
+        self.ui.estado("Leyendo las cuentas del menú de Facebook…")
+        cuentas = fb.leer_cuentas()
+        if not cuentas:
+            self.cola_ui.put(("fin", "⚠️ No se encontraron cuentas en el menú de Facebook."))
+            return
+        self.cola_ui.put(("cuentas", cuentas))
+        self.cola_ui.put(("fin", f"✅ {len(cuentas)} cuentas encontradas."))
+
+    def _grupos(self, cuenta: str = "", ruta: Path | None = None) -> None:
+        fb = self._inicio()
+        self._cambiar(fb, cuenta)
         encontrados = fb.extraer_grupos(self.ui.estado)
         if not encontrados:
-            self.cola_ui.put(("fin", "⚠️ No se encontró ningún grupo. ¿Iniciaste sesión con la cuenta correcta?"))
+            self.cola_ui.put(("fin", "⚠️ No se encontró ningún grupo. ¿Es la cuenta correcta?"))
             return
-        nuevos = actualizar_grupos(self.datos / "grupos.txt", encontrados)
-        self.cola_ui.put(("fin", f"✅ {len(encontrados)} grupos encontrados ({nuevos} nuevos)."))
+        nuevos = actualizar_grupos(ruta or self.datos / "grupos.txt", encontrados)
+        de = f" de «{cuenta}»" if cuenta else ""
+        self.cola_ui.put(("fin", f"✅ {len(encontrados)} grupos encontrados{de} ({nuevos} nuevos)."))
 
-    def _tira(self, tira: Tira, dia: str, nombre: str, controles: Controles, minutos: int) -> None:
-        fb = self._navegador()
-        r = ejecutar_tira(tira, dia, nombre, fb, self.ui, controles, self.datos / "grupos.txt",
-                          Historial(self.datos / "historial.csv"), minutos)
+    def _tira(self, tira: Tira, dia: str, nombre: str, controles: Controles, minutos: int,
+              cuenta: str = "", ritmo: Ritmo | None = None, ruta: Path | None = None,
+              cuenta_principal: str = "") -> None:
+        fb = self._inicio()
+        self._cambiar(fb, cuenta)
+        r = ejecutar_tira(tira, dia, nombre, fb, self.ui, controles, ruta or self.datos / "grupos.txt",
+                          Historial(self.datos / "historial.csv", cuenta_principal), minutos,
+                          cuenta=cuenta, ritmo=ritmo)
+        if r.motivo_fin == "bloqueada":
+            self.cola_ui.put(("bloqueada", r.cuenta_bloqueada, r.mensaje_bloqueo, (tira, dia, nombre)))
+            return
         if r.motivo_fin == "terminada":
             msg = f"{nombre} terminada ✅ ({r.publicadas} publicadas, {r.saltadas} grupos saltados)"
         elif r.motivo_fin == "detenida":
@@ -140,9 +179,12 @@ class App:
         self.root = root
         self.datos = Path(datos) if datos else carpeta_datos()
         self.ruta_config = self.datos / "config.json"
-        self.ruta_grupos = self.datos / "grupos.txt"
-        self.historial = Historial(self.datos / "historial.csv")
+        self.ruta_cuentas = self.datos / "cuentas.json"
         self.cfg: Config = cargar_config(self.ruta_config)
+        ajustar_espera(self.cfg)
+        self.cuentas, self._ultima_cuenta = cargar_cuentas(self.ruta_cuentas)
+        self.historial = Historial(self.datos / "historial.csv", self._principal())
+        self._migrar()
         self.tira: Tira | None = None
         self.dia_nombre = ""
         self.tira_nombre = ""
@@ -156,8 +198,10 @@ class App:
         self.trabajador.start()
 
         self._construir()
+        self._cargar_cuentas_en_combo()
         self._cargar_dias()
         self._actualizar_conteo_grupos()
+        self._revisar_riesgo()
         self.root.protocol("WM_DELETE_WINDOW", self._al_cerrar)
         self.root.report_callback_exception = self._error_en_ventana
         self.root.after(100, self._procesar_cola)
@@ -179,6 +223,15 @@ class App:
 
         fila = ttk.Frame(marco)
         fila.grid(row=1, column=0, columnspan=3, sticky="we", pady=(8, 0))
+        ttk.Label(fila, text="Cuenta:").pack(side="left")
+        self.combo_cuenta = ttk.Combobox(fila, state="readonly", width=34)
+        self.combo_cuenta.pack(side="left", padx=4)
+        self.combo_cuenta.bind("<<ComboboxSelected>>", lambda e: self._cuenta_elegida())
+        self.btn_cuentas = ttk.Button(fila, text="Actualizar cuentas", command=self._actualizar_cuentas)
+        self.btn_cuentas.pack(side="right")
+
+        fila = ttk.Frame(marco)
+        fila.grid(row=2, column=0, columnspan=3, sticky="we", pady=(8, 0))
         ttk.Label(fila, text="Día:").pack(side="left")
         self.combo_dia = ttk.Combobox(fila, state="readonly", width=16)
         self.combo_dia.pack(side="left", padx=(4, 12))
@@ -191,14 +244,14 @@ class App:
         self.btn_escoger.pack(side="right")
 
         self.resumen = tk.Text(marco, height=15, wrap="none", relief="solid", borderwidth=1)
-        self.resumen.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=8)
+        self.resumen.grid(row=3, column=0, columnspan=3, sticky="nsew", pady=8)
         self.resumen.tag_configure("error", foreground="#b00020")
         self.resumen.tag_configure("titulo", font=("TkDefaultFont", 10, "bold"))
         self.resumen.configure(state="disabled")
-        marco.rowconfigure(2, weight=1)
+        marco.rowconfigure(3, weight=1)
 
         fila = ttk.Frame(marco)
-        fila.grid(row=3, column=0, columnspan=3, sticky="we")
+        fila.grid(row=4, column=0, columnspan=3, sticky="we")
         self.btn_grupos = ttk.Button(fila, text="Actualizar grupos", command=self._actualizar_grupos)
         self.btn_grupos.pack(side="left")
         self.var_grupos = tk.StringVar()
@@ -206,28 +259,147 @@ class App:
         ttk.Button(fila, text="Abrir carpeta de datos", command=self._abrir_datos).pack(side="right")
 
         fila = ttk.Frame(marco)
-        fila.grid(row=4, column=0, columnspan=3, sticky="we", pady=(6, 0))
+        fila.grid(row=5, column=0, columnspan=3, sticky="we", pady=(6, 0))
         ttk.Label(fila, text="Minutos antes de repetir un grupo:").pack(side="left")
         self.var_minutos = tk.IntVar(value=self.cfg.minutos_entre_publicaciones)
         ttk.Spinbox(fila, from_=0, to=1440, increment=15, width=6, textvariable=self.var_minutos,
                     command=self._guardar_minutos).pack(side="left", padx=4)
 
+        fila = ttk.Frame(marco)
+        fila.grid(row=6, column=0, columnspan=3, sticky="we", pady=(6, 0))
+        self.var_modo = tk.StringVar(value=self.cfg.modo)
+        ttk.Radiobutton(fila, text="Con revisión (tú das clic)", variable=self.var_modo, value="revision",
+                        command=self._cambio_ritmo).pack(side="left")
+        ttk.Radiobutton(fila, text="Automático", variable=self.var_modo, value="automatico",
+                        command=self._cambio_ritmo).pack(side="left", padx=(8, 12))
+        ttk.Label(fila, text="Esperar entre").pack(side="left")
+        self.var_espera_min = tk.IntVar(value=self.cfg.espera_min)
+        self.var_espera_max = tk.IntVar(value=self.cfg.espera_max)
+        for var, texto in ((self.var_espera_min, "y"), (self.var_espera_max, "minutos")):
+            caja = ttk.Spinbox(fila, from_=2, to=240, width=4, textvariable=var, command=self._cambio_ritmo)
+            caja.pack(side="left", padx=3)
+            caja.bind("<FocusOut>", lambda e: self._cambio_ritmo())
+            caja.bind("<KeyRelease>", lambda e: self._revisar_riesgo())
+            ttk.Label(fila, text=texto).pack(side="left")
+
+        self.var_aviso = tk.StringVar()
+        self.lbl_aviso = tk.Label(marco, textvariable=self.var_aviso, wraplength=540, justify="left", anchor="w",
+                                  padx=6, pady=3)
+        self.lbl_aviso.grid(row=7, column=0, columnspan=3, sticky="we", pady=(6, 0))
+        self._fondo_normal = self.lbl_aviso.cget("background")
+
         self.btn_empezar = ttk.Button(marco, text="▶  Empezar", command=self._empezar, state="disabled")
-        self.btn_empezar.grid(row=5, column=0, columnspan=3, pady=10, ipadx=20, ipady=4)
+        self.btn_empezar.grid(row=8, column=0, columnspan=3, pady=10, ipadx=20, ipady=4)
 
         self.var_progreso = tk.StringVar()
         ttk.Label(marco, textvariable=self.var_progreso, font=("TkDefaultFont", 10, "bold")).grid(
-            row=6, column=0, columnspan=3, sticky="w")
+            row=9, column=0, columnspan=3, sticky="w")
         self.var_estado = tk.StringVar(value="Escoge una tira para empezar.")
-        ttk.Label(marco, textvariable=self.var_estado, wraplength=520).grid(row=7, column=0, columnspan=3, sticky="w")
+        ttk.Label(marco, textvariable=self.var_estado, wraplength=520).grid(row=10, column=0, columnspan=3, sticky="w")
 
         fila = ttk.Frame(marco)
-        fila.grid(row=8, column=0, columnspan=3, pady=(8, 0))
+        fila.grid(row=11, column=0, columnspan=3, pady=(8, 0))
         self.btn_saltar = ttk.Button(fila, text="Saltar este grupo", state="disabled",
                                      command=lambda: self.controles.saltar.set())
         self.btn_saltar.pack(side="left", padx=6)
         self.btn_detener = ttk.Button(fila, text="Detener", state="disabled", command=self._detener)
         self.btn_detener.pack(side="left", padx=6)
+
+    # --- cuentas -----------------------------------------------------------------------
+    def _principal(self) -> str:
+        c = principal(self.cuentas)
+        return c.nombre if c else ""
+
+    def _migrar(self) -> None:
+        if self._principal():
+            try:
+                migrar_grupos(self.datos, self._principal())
+            except OSError:
+                pass
+
+    @property
+    def cuenta(self) -> str:
+        return self.combo_cuenta.get() if hasattr(self, "combo_cuenta") else ""
+
+    @property
+    def ruta_grupos(self) -> Path:
+        return ruta_grupos(self.datos, self.cuenta) if self.cuenta else self.datos / "grupos.txt"
+
+    def _cargar_cuentas_en_combo(self) -> None:
+        nombres = [c.nombre for c in self.cuentas]
+        self.combo_cuenta["values"] = nombres
+        if self._ultima_cuenta in nombres:
+            self.combo_cuenta.set(self._ultima_cuenta)
+        elif nombres:
+            self.combo_cuenta.set(self._principal())
+        else:
+            self.combo_cuenta.set("")
+
+    def _cuenta_elegida(self, avisar: bool = True) -> None:
+        self._ultima_cuenta = self.cuenta
+        try:
+            guardar_cuentas(self.ruta_cuentas, self.cuentas, self._ultima_cuenta)
+        except OSError:
+            pass
+        self._actualizar_conteo_grupos()
+        if self.tira is not None:
+            self._mostrar_tira(self.tira)
+        self._revisar_riesgo()
+        if avisar and self.cuenta and self.historial.bloqueada_hoy(self.cuenta, date.today()):
+            texto = f"🔴 «{self.cuenta}» tuvo un bloqueo hoy. Usarla de nuevo puede empeorarlo."
+            self._mostrar_aviso("rojo", texto)
+            messagebox.showwarning(TITULO, texto)
+
+    def _actualizar_cuentas(self) -> None:
+        self._marcar_corriendo(True, tira=False)
+        self.var_estado.set("Abriendo el navegador…")
+        self.trabajador.comandos.put(("cuentas",))
+
+    def _cuentas_encontradas(self, lista: list[tuple[str, str]]) -> None:
+        self.cuentas = [Cuenta(n, t) for n, t in lista]
+        if self._ultima_cuenta not in [c.nombre for c in self.cuentas]:
+            self._ultima_cuenta = self._principal()
+        self.historial.cuenta_principal = self._principal()
+        self._migrar()
+        self._cargar_cuentas_en_combo()
+        self._cuenta_elegida(avisar=False)
+
+    # --- ritmo y avisos ----------------------------------------------------------------
+    def _leer_entero(self, var: tk.IntVar, defecto: int) -> int:
+        try:
+            return int(var.get())
+        except (tk.TclError, ValueError):
+            return defecto
+
+    def _cambio_ritmo(self) -> None:
+        self.cfg.modo = self.var_modo.get()
+        self.cfg.espera_min = self._leer_entero(self.var_espera_min, self.cfg.espera_min)
+        self.cfg.espera_max = self._leer_entero(self.var_espera_max, self.cfg.espera_max)
+        ajustar_espera(self.cfg)
+        self.var_espera_min.set(self.cfg.espera_min)
+        self.var_espera_max.set(self.cfg.espera_max)
+        self._guardar()
+        self._revisar_riesgo()
+
+    def _revisar_riesgo(self) -> None:
+        if self.var_modo.get() != "automatico":
+            self._mostrar_aviso("", "")
+            return
+        minimo = self._leer_entero(self.var_espera_min, self.cfg.espera_min)
+        if minimo <= 3:
+            self._mostrar_aviso("rojo", "🔴 Ritmo muy rápido: riesgo alto de bloqueo de la cuenta.")
+        elif minimo < 5:
+            self._mostrar_aviso("amarillo", "🟡 Ritmo rápido: aumenta el riesgo de bloqueo.")
+        else:
+            self._mostrar_aviso("", "")
+
+    def _mostrar_aviso(self, nivel: str, mensaje: str) -> None:
+        colores = {"amarillo": "#fff3cd", "rojo": "#f8d7da"}
+        self.var_aviso.set(mensaje)
+        self.lbl_aviso.configure(background=colores.get(nivel, self._fondo_normal))
+
+    def _ritmo(self) -> Ritmo:
+        return Ritmo(self.cfg.modo, self.cfg.espera_min, self.cfg.espera_max)
 
     # --- carpetas y tiras ------------------------------------------------------------
     def _guardar(self) -> None:
@@ -310,12 +482,12 @@ class App:
     def _actualizar_conteo_grupos(self) -> None:
         gs = cargar_grupos(self.ruta_grupos)
         activos = sum(g.activo for g in gs)
-        self.var_grupos.set(f"({len(gs)} grupos guardados, {activos} activos)" if gs else "(sin grupos todavía)")
+        self.var_grupos.set(f"({len(gs)} grupos, {activos} activos)" if gs else "(sin grupos todavía)")
 
     def _actualizar_grupos(self) -> None:
         self._marcar_corriendo(True, tira=False)
         self.var_estado.set("Abriendo el navegador…")
-        self.trabajador.comandos.put(("grupos",))
+        self.trabajador.comandos.put(("grupos", self.cuenta, self.ruta_grupos))
 
     def _abrir_datos(self) -> None:
         ruta = str(self.datos)
@@ -341,11 +513,24 @@ class App:
                                                     "¿Seguir con las que faltan?"):
                 return
         self._guardar_minutos()
+        self._cambio_ritmo()
+        if self.cfg.modo == "automatico":
+            quien = f"«{self.cuenta}»" if self.cuenta else "la cuenta"
+            if not messagebox.askyesno(
+                    TITULO, f"Modo automático: el programa va a publicar SOLO con {quien}, esperando entre "
+                            f"{self.cfg.espera_min} y {self.cfg.espera_max} minutos entre publicaciones.\n\n"
+                            "⚠️ Publicar automáticamente en muchos grupos puede hacer que Facebook bloquee la "
+                            "cuenta. El programa se detiene si ve señales de bloqueo.\n\n¿Empezar?"):
+                return
         self.controles = Controles()
         self._marcar_corriendo(True, tira=True)
         self.var_estado.set("Abriendo el navegador…")
-        self.trabajador.comandos.put(("tira", self.tira, self.dia_nombre, self.tira_nombre, self.controles,
-                                      self.cfg.minutos_entre_publicaciones))
+        self._enviar_tira(self.tira, self.dia_nombre, self.tira_nombre)
+
+    def _enviar_tira(self, tira: Tira, dia: str, nombre: str) -> None:
+        self.trabajador.comandos.put(("tira", tira, dia, nombre, self.controles,
+                                      self.cfg.minutos_entre_publicaciones, self.cuenta, self._ritmo(),
+                                      self.ruta_grupos, self._principal()))
 
     def _detener(self) -> None:
         self.controles.detener.set()
@@ -355,8 +540,9 @@ class App:
         self.corriendo = corriendo
         self.btn_saltar.configure(state="normal" if corriendo and tira else "disabled")
         self.btn_detener.configure(state="normal" if corriendo and tira else "disabled")
-        for b in (self.btn_grupos, self.btn_cambiar, self.btn_escoger):
+        for b in (self.btn_grupos, self.btn_cambiar, self.btn_escoger, self.btn_cuentas):
             b.configure(state="disabled" if corriendo else "normal")
+        self.combo_cuenta.configure(state="disabled" if corriendo else "readonly")
         for w in (self.combo_dia, self.combo_tira):
             w.configure(state="disabled" if corriendo else "readonly")
         self._actualizar_botones()
@@ -400,6 +586,15 @@ class App:
                     self._dialogo(mensaje, opciones, respuesta)
                     if self.cerrando:
                         return
+                elif tipo == "aviso":
+                    _, nivel, mensaje = msg
+                    self._mostrar_aviso(nivel, mensaje)
+                    if nivel == "rojo":
+                        messagebox.showwarning(TITULO, mensaje)
+                elif tipo == "cuentas":
+                    self._cuentas_encontradas(msg[1])
+                elif tipo == "bloqueada":
+                    self._cuenta_bloqueada(*msg[1:])
                 elif tipo == "fin":
                     self.var_estado.set(msg[1])
                     self.var_progreso.set("")
@@ -410,6 +605,30 @@ class App:
                         self.var_estado.set(msg[1])
         except queue.Empty:
             pass
+
+    def _elegir_opcion(self, mensaje: str, opciones: list[str]) -> str:
+        respuesta: queue.Queue = queue.Queue(maxsize=1)
+        self._dialogo(mensaje, opciones, respuesta)
+        return respuesta.get_nowait()
+
+    def _cuenta_bloqueada(self, cuenta: str, mensaje: str, args: tuple) -> None:
+        otras = [c.nombre for c in self.cuentas if c.nombre != cuenta]
+        texto = (f"⛔ Facebook bloqueó o pidió verificación a «{cuenta}»:\n«{mensaje}»\n\n"
+                 "La tira se detuvo. Lo que ya se publicó quedó guardado.")
+        self._mostrar_aviso("rojo", texto.replace("\n\n", " ").replace("\n", " "))
+        opciones = (["Seguir con otra cuenta"] if otras else []) + [DETENER]
+        if self._elegir_opcion(texto, opciones) == "Seguir con otra cuenta":
+            nueva = self._elegir_opcion("¿Con qué cuenta sigo la tira?", otras + ["Cancelar"])
+            if nueva in otras:
+                self.combo_cuenta.set(nueva)
+                self._cuenta_elegida(avisar=False)
+                self.controles = Controles()
+                self.var_estado.set(f"Siguiendo la tira con «{nueva}»…")
+                self._enviar_tira(*args)
+                return
+        self.var_estado.set(f"⛔ Se detuvo: «{cuenta}» tuvo un bloqueo.")
+        self.var_progreso.set("")
+        self._marcar_corriendo(False)
 
     def _dialogo(self, mensaje: str, opciones: list[str], respuesta: queue.Queue) -> None:
         """Muestra un aviso con botones. Cerrar el aviso con la X equivale a la última opción."""

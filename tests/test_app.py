@@ -101,3 +101,71 @@ def test_error_en_la_ventana_no_la_congela(ventana, monkeypatch):
     app._procesar_cola()  # no debe lanzar
     assert root.tk.call("after", "info")  # se volvió a programar
     assert "PermissionError" in (app.datos / "errores.log").read_text(encoding="utf-8")
+
+
+# --- Cuentas y modo automático --------------------------------------------------------
+import json  # noqa: E402
+import queue  # noqa: E402
+
+
+@pytest.fixture
+def ventana_cuentas(tmp_path):
+    from publicador.app import crear_ventana
+    datos = tmp_path / "datos"
+    datos.mkdir()
+    (datos / "cuentas.json").write_text(json.dumps({"cuentas": [
+        {"nombre": "Reparaciones Gigabyte", "tipo": "perfil"},
+        {"nombre": "Gigabyte Centro", "tipo": "pagina"},
+        {"nombre": "Gigabyte Norte", "tipo": "pagina"}], "ultima": "Gigabyte Centro"}), encoding="utf-8")
+    (datos / "grupos.txt").write_text("A | https://www.facebook.com/groups/1/\n", encoding="utf-8")
+    try:
+        root = crear_ventana(datos)
+    except tk.TclError as e:
+        pytest.skip(f"sin pantalla: {e}")
+    root.update()
+    root.app.trabajador.comandos = queue.Queue()  # que el hilo no abra un navegador en la prueba
+    yield root, datos
+    try:
+        root.destroy()
+    except tk.TclError:
+        pass
+
+
+def test_cuentas_en_la_ventana_y_migracion(ventana_cuentas):
+    root, datos = ventana_cuentas
+    app = root.app
+    assert list(app.combo_cuenta["values"]) == ["Reparaciones Gigabyte", "Gigabyte Centro", "Gigabyte Norte"]
+    assert app.combo_cuenta.get() == "Gigabyte Centro"
+    assert (datos / "grupos" / "reparaciones-gigabyte.txt").exists()
+    assert not (datos / "grupos.txt").exists()
+    assert "sin grupos" in app.var_grupos.get()  # la Página todavía no tiene grupos
+
+
+def test_aviso_de_riesgo_en_vivo(ventana_cuentas):
+    root, _ = ventana_cuentas
+    app = root.app
+    app.var_modo.set("automatico")
+    app.var_espera_min.set(2)
+    app._revisar_riesgo()
+    assert "alto" in app.var_aviso.get()
+    app.var_espera_min.set(4)
+    app._revisar_riesgo()
+    assert "rápido" in app.var_aviso.get()
+    app.var_espera_min.set(8)
+    app._revisar_riesgo()
+    assert app.var_aviso.get() == ""
+
+
+def test_bloqueo_ofrece_seguir_con_otra_cuenta(ventana_cuentas, monkeypatch):
+    root, _ = ventana_cuentas
+    app = root.app
+    respuestas = iter(["Seguir con otra cuenta", "Gigabyte Norte"])
+    monkeypatch.setattr(app, "_elegir_opcion", lambda mensaje, opciones: next(respuestas))
+    app.corriendo = True
+    tira_args = ("TIRA", "1.lunes", "TIRA 1")
+    app.cola_ui.put(("bloqueada", "Gigabyte Centro", "Estás bloqueado", tira_args))
+    app._procesar_cola()
+    cmd = app.trabajador.comandos.get_nowait()
+    assert cmd[0] == "tira" and cmd[1:4] == tira_args
+    assert cmd[6] == "Gigabyte Norte"
+    assert app.combo_cuenta.get() == "Gigabyte Norte"

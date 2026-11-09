@@ -46,11 +46,35 @@ Necesitas **Google Chrome** o **Microsoft Edge** (Edge ya viene con Windows).
    - Si se vence la sesión de Facebook, el programa te pide volver a iniciarla y sigue donde iba.
    - Si tienes `historial.csv` abierto en Excel, el programa te pide cerrarlo para poder anotar.
 
+## Cuentas (perfil y Páginas de sucursal)
+
+1. Da clic en **Actualizar cuentas**. El programa abre el menú de tu foto en Facebook y lee los perfiles
+   disponibles (el perfil de la empresa y sus Páginas).
+2. Escoge la cuenta en **Cuenta**. El programa se cambia solo a esa cuenta antes de publicar.
+3. **Cada cuenta tiene sus propios grupos**: con la cuenta escogida, da clic en **Actualizar grupos**.
+   Una Página solo puede publicar en los grupos a los que ella se unió.
+4. Si en un grupo una cuenta no puede publicar (por ejemplo, la banearon), el programa lo ignora **solo para
+   esa cuenta** y sigue con otro.
+
+## Modo automático
+
+- **Con revisión:** el programa deja todo listo y tú das clic en «Publicar».
+- **Automático:** el programa publica solo y espera entre los minutos que pongas (mínimo 2) antes de la
+  siguiente publicación. Mientras espera, ves la cuenta regresiva. **Detener** funciona en cualquier momento.
+- ⚠️ **Riesgo:** publicar automáticamente en muchos grupos puede hacer que Facebook bloquee la cuenta.
+  El programa avisa:
+  - 🟡 / 🔴 si el ritmo es rápido (menos de 5 minutos, o 3 o menos).
+  - 🟡 cuando una cuenta llega a 24 y a 48 publicaciones en el día.
+  - 🟡 si hay varios errores seguidos (Facebook podría estar limitando la cuenta).
+- ⛔ Si Facebook muestra un bloqueo o pide verificación, el programa **se detiene**, te dice qué cuenta y qué
+  mensaje, y te ofrece **seguir la tira con otra cuenta**. Lo ya publicado no se repite.
+- Recomendación: prueba primero cada cuenta nueva en **Con revisión** con 1 o 2 publicaciones.
+
 ## Archivos de datos
 
 Con **Abrir carpeta de datos** ves:
 
-- `grupos.txt`: la lista de grupos. Si pones `#` al principio de una línea, el programa ignora ese grupo.
+- `grupos/<cuenta>.txt`: la lista de grupos de cada cuenta. Si pones `#` al principio de una línea, el programa ignora ese grupo.
   Si le quitas el `#`, el grupo vuelve a usarse.
 - `historial.csv`: todo lo que se publicó, en qué grupo y a qué hora. Se abre en Excel para consultarlo;
   mejor **no lo guardes desde Excel** (si pasa, el programa lo repara solo, pero es mejor evitarlo).
