@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e . pytest pyinstaller
+          python -m playwright install chromium
+
+      - name: Pruebas
+        run: pytest -v
+
+      - name: Generar PublicadorTiras.exe
+        run: pyinstaller --onefile --windowed --name PublicadorTiras --paths src src/publicador/__main__.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PublicadorTiras
+          path: dist/PublicadorTiras.exe
