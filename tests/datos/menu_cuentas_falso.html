@@ -7,7 +7,7 @@
 <div role="radio" aria-checked="false">Encuesta: Sí</div>
 <script>
 const PERFILES = ['Reparaciones Gigabyte', 'Gigabyte Sucursal Centro', 'Gigabyte Sucursal Norte'];
-const actual = new URLSearchParams(location.search).get('cuenta') || PERFILES[0];
+const actual = new URLSearchParams(location.search).get('cuenta') || localStorage.getItem('cuenta') || PERFILES[0];
 document.getElementById('foto').addEventListener('click', () => {
   const d = document.createElement('div');
   d.setAttribute('role', 'dialog');
@@ -23,6 +23,7 @@ document.getElementById('foto').addEventListener('click', () => {
       r.tabIndex = 0;
       r.innerHTML = `<span>${p}</span>`;
       r.addEventListener('click', () => {
+        localStorage.setItem('cuenta', p);  // la cuenta queda guardada, como la sesión de Facebook
         location.search = '?cuenta=' + encodeURIComponent(p);  // Facebook recarga al cambiar
       });
       d.appendChild(r);

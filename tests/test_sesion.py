@@ -524,3 +524,17 @@ def test_cinco_errores_seguidos_pregunta(entorno):
     r, _ = _auto(tira, rg, h, fb, ui)
     assert r.motivo_fin == "detenida"
     assert any("errores seguidos" in p for p in ui.preguntas)
+
+
+def test_detener_justo_antes_de_preparar_no_abre_el_grupo(entorno):
+    tira, rg, h = entorno(n_pubs=1)
+    c = Controles()
+
+    class UIDetieneAlPreparar(FakeUI):
+        def estado(self, m):
+            super().estado(m)
+            if m.startswith("Preparando"):
+                c.detener.set()
+    fb = FakeFB()
+    r = _correr(tira, rg, h, fb, UIDetieneAlPreparar(), c)
+    assert r.motivo_fin == "detenida" and fb.preparadas == []

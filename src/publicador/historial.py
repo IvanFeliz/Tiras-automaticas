@@ -111,6 +111,13 @@ class Historial:
     def agregar(self, r: Registro) -> None:
         self._normalizar()
         nuevo = not self.ruta.exists() or self.ruta.stat().st_size == 0
+        if not nuevo:
+            with self.ruta.open("rb") as f:
+                f.seek(-1, 2)
+                falta_salto = f.read(1) not in (b"\n", b"\r")
+            if falta_salto:  # si alguien lo guardó sin salto final, la fila nueva no se pega a la última
+                with self.ruta.open("ab") as f:
+                    f.write(b"\r\n")
         with self.ruta.open("a", encoding="utf-8-sig" if nuevo else "utf-8", newline="") as f:
             w = csv.DictWriter(f, fieldnames=CAMPOS)
             if nuevo:

@@ -118,3 +118,12 @@ def test_reescritura_conserva_filas_raras(tmp_path):
     h = Historial(ruta)
     h.agregar(_rc(datetime(2026, 11, 9, 11), 2, "L2", "publicado", "Yo"))
     assert "08/11/2026 10:00 a. m." in ruta.read_text(encoding="utf-8-sig")
+
+
+def test_archivo_sin_salto_de_linea_final(tmp_path):
+    ruta = tmp_path / "h.csv"
+    ruta.write_text("fecha_hora,dia,tira,numero,titulo,grupo,link_grupo,archivo_ubicacion,resultado,cuenta\n"
+                    "2026-11-09 10:00:00,1.lunes,TIRA 1,1,T,G,L1,u,publicado,Yo", encoding="utf-8-sig")
+    h = Historial(ruta)
+    h.agregar(_rc(datetime(2026, 11, 9, 11), 2, "L2", "publicado", "Yo"))
+    assert h.publicadas("1.lunes", "TIRA 1", date(2026, 11, 9)) == {1: "L1", 2: "L2"}

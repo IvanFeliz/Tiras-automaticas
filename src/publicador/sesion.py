@@ -235,6 +235,8 @@ def ejecutar_tira(tira: Tira, dia: str, nombre_tira: str, fb: NavegadorProto, ui
                 excluir.add(grupo.link)
             ui.progreso(indice, total, pub.titulo, grupo.nombre)
             ui.estado(f"Preparando publicación {indice} de {total} en «{grupo.nombre}»…")
+            if controles.detener.is_set():
+                return fin("detenida")
 
             ubicacion = rng.choice(tira.ubicaciones)
             try:
