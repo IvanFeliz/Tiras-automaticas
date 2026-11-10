@@ -24,7 +24,7 @@ jobs:
           python -m playwright install chromium
 
       - name: Pruebas
-        run: pytest -v
+        run: pytest -v -rs
 
       # Carpeta (onedir) en vez de un solo .exe: abre más rápido y el antivirus la bloquea menos.
       - name: Generar PublicadorTiras

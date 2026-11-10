@@ -233,8 +233,8 @@ class App:
         # Encabezado
         cab = tk.Frame(r, background=estilo.AZUL_OSCURO, padx=18, pady=10)
         cab.pack(fill="x")
-        self.logo_cabecera = tk.PhotoImage(file=str(RECURSOS / "logo_44.png"))
-        self.logo_ventana = tk.PhotoImage(file=str(RECURSOS / "logo_64.png"))
+        self.logo_cabecera = tk.PhotoImage(master=r, file=str(RECURSOS / "logo_44.png"))
+        self.logo_ventana = tk.PhotoImage(master=r, file=str(RECURSOS / "logo_64.png"))
         r.iconphoto(True, self.logo_ventana)  # ícono en la barra de tareas
         tk.Label(cab, image=self.logo_cabecera, background=estilo.AZUL_OSCURO).pack(side="left", padx=(0, 10))
         tk.Label(cab, text="Publicador de Tiras", background=estilo.AZUL_OSCURO, foreground="white",
