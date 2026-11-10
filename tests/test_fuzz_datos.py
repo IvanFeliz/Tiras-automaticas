@@ -44,7 +44,8 @@ def _tira_al_azar(carpeta, rng):
     for num in set(numeros):
         if rng.random() < 0.92:
             ext = rng.choice([".png", ".jpg", ".jpeg", ".webp", ".PNG"])
-            (carpeta / f"{num} {_texto(rng, rng.randint(0, 12), False).strip('/')}{ext}".replace("/", "")).write_bytes(b"x")
+            nombre = "".join(ch for ch in _texto(rng, rng.randint(0, 12), False) if ch not in '<>:"/\\|?*')
+            (carpeta / f"{num} {nombre.rstrip(' .')}{ext}").write_bytes(b"x")  # nombres válidos en Windows
     if rng.random() < 0.1:
         (carpeta / f"{n + 1} EXTRA.png").write_bytes(b"x")
     for nombre in rng.sample(["000.LOCAL.jpeg", "0.CROQUIS.jpg", "0.VIDEO.mp4", "0.X.mov"], rng.randint(0, 4)):
