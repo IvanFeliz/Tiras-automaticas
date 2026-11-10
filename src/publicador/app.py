@@ -23,6 +23,7 @@ from .sesion import (DETENER, Controles, ErrorFacebook, NavegadorCerrado, Ritmo,
 from .tira import Tira, leer_tira, listar_subcarpetas
 
 TITULO = "Publicador de Tiras"
+RECURSOS = Path(__file__).parent / "recursos"
 
 
 def escribir_log(datos: Path, texto: str) -> None:
@@ -230,9 +231,13 @@ class App:
         self.fuentes = estilo.aplicar_estilo(r)
 
         # Encabezado
-        cab = tk.Frame(r, background=estilo.AZUL_OSCURO, padx=18, pady=12)
+        cab = tk.Frame(r, background=estilo.AZUL_OSCURO, padx=18, pady=10)
         cab.pack(fill="x")
-        tk.Label(cab, text="📢  Publicador de Tiras", background=estilo.AZUL_OSCURO, foreground="white",
+        self.logo_cabecera = tk.PhotoImage(file=str(RECURSOS / "logo_44.png"))
+        self.logo_ventana = tk.PhotoImage(file=str(RECURSOS / "logo_64.png"))
+        r.iconphoto(True, self.logo_ventana)  # ícono en la barra de tareas
+        tk.Label(cab, image=self.logo_cabecera, background=estilo.AZUL_OSCURO).pack(side="left", padx=(0, 10))
+        tk.Label(cab, text="Publicador de Tiras", background=estilo.AZUL_OSCURO, foreground="white",
                  font=self.fuentes["titulo"]).pack(side="left")
         self.var_cabecera = tk.StringVar()
         tk.Label(cab, textvariable=self.var_cabecera, background=estilo.AZUL_OSCURO, foreground="#a5c8ff",

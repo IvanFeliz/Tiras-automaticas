@@ -254,3 +254,9 @@ def test_barra_de_progreso(ventana):
     app.cola_ui.put(("fin", "listo"))
     app._procesar_mensajes()
     assert float(app.barra["value"]) == 0
+
+
+def test_logo_en_el_encabezado(ventana):
+    root, _ = ventana
+    app = root.app
+    assert app.logo_cabecera.width() == 44 and app.logo_cabecera.height() == 44

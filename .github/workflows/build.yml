@@ -29,7 +29,7 @@ jobs:
       # Carpeta (onedir) en vez de un solo .exe: abre más rápido y el antivirus la bloquea menos.
       - name: Generar PublicadorTiras
         run: |
-          pyinstaller --onedir --windowed --name PublicadorTiras --paths src src/publicador/__main__.py
+          pyinstaller --onedir --windowed --name PublicadorTiras --paths src --icon src/publicador/recursos/logo.ico --add-data "src/publicador/recursos;publicador/recursos" src/publicador/__main__.py
           Copy-Item LEEME.md dist/PublicadorTiras/LEEME.md
 
       - uses: actions/upload-artifact@v5
